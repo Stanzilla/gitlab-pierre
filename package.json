@@ -1,0 +1,25 @@
+{
+  "name": "gitlab-pierre",
+  "version": "0.3.5",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "build": "tsc --noEmit && vite build --config vite.config.ts && vite build --config vite.loader.config.ts",
+    "typecheck": "tsc --noEmit",
+    "dev": "vite build --config vite.config.ts --watch"
+  },
+  "dependencies": {
+    "@pierre/diffs": "1.1.19",
+    "@pierre/trees": "1.0.0-beta.3",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.1.33",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "typescript": "6.0.3",
+    "vite": "8.0.10"
+  }
+}

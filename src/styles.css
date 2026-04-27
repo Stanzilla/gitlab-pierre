@@ -1,0 +1,458 @@
+.gitlab-pierre-native-hidden {
+  display: none !important;
+}
+
+.gitlab-pierre-shell {
+  color: var(--gl-text-color-default, #1f1e24);
+  font-family: var(--default-regular-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+.gitlab-pierre-native-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-width: 0;
+  padding: 0.75rem 1rem 0.5rem;
+}
+
+.gitlab-pierre-version-controls,
+.gitlab-pierre-toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gitlab-pierre-toolbar-actions {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.gitlab-pierre-commit-context {
+  color: var(--gl-text-color-default, #1f1e24);
+  font-size: 0.8125rem;
+  line-height: 1.25;
+}
+
+.gitlab-pierre-commit-context .monospace {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.gitlab-pierre-settings {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.gitlab-pierre-settings-button,
+.gitlab-pierre-native-button,
+.gitlab-pierre-icon-button {
+  min-height: 2.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.5rem;
+  background: var(--gl-background-color-default, #fff);
+  color: var(--gl-text-color-default, #1f1e24);
+  cursor: pointer;
+  font: 600 0.8125rem/1.25 var(--default-regular-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  transition-duration: 120ms;
+  transition-property: background-color, border-color, color, transform;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.gitlab-pierre-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 2.5rem;
+  padding: 0;
+}
+
+.gitlab-pierre-native-button {
+  text-decoration: none;
+}
+
+.gitlab-pierre-settings-button:hover,
+.gitlab-pierre-settings-button:focus-visible,
+.gitlab-pierre-native-button:hover,
+.gitlab-pierre-native-button:focus-visible,
+.gitlab-pierre-icon-button:hover,
+.gitlab-pierre-icon-button:focus-visible {
+  border-color: var(--gl-link-color-default, #1f75cb);
+  color: var(--gl-link-color-default, #1f75cb);
+  outline: none;
+}
+
+.gitlab-pierre-settings-button:active,
+.gitlab-pierre-native-button:active,
+.gitlab-pierre-icon-button:active {
+  transform: scale(0.96);
+}
+
+.gitlab-pierre-settings-button:disabled,
+.gitlab-pierre-native-button:disabled,
+.gitlab-pierre-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.gitlab-pierre-native-button[aria-pressed="true"],
+.gitlab-pierre-icon-button[aria-pressed="true"] {
+  background: var(--gl-background-color-strong, #ececef);
+}
+
+.gitlab-pierre-sidebar-icon {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  border: 1.5px solid currentColor;
+  border-radius: 0.1875rem;
+  position: relative;
+}
+
+.gitlab-pierre-sidebar-icon::before {
+  content: "";
+  position: absolute;
+  top: -1.5px;
+  bottom: -1.5px;
+  left: 0.25rem;
+  border-left: 1.5px solid currentColor;
+}
+
+.gitlab-pierre-button-group {
+  display: inline-flex;
+}
+
+.gitlab-pierre-button-group .gitlab-pierre-icon-button {
+  border-radius: 0;
+}
+
+.gitlab-pierre-button-group .gitlab-pierre-icon-button:first-child {
+  border-radius: 0.5rem 0 0 0.5rem;
+}
+
+.gitlab-pierre-button-group .gitlab-pierre-icon-button:last-child {
+  border-left-width: 0;
+  border-radius: 0 0.5rem 0.5rem 0;
+}
+
+.gitlab-pierre-diff-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--gl-text-color-subtle, #626168);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.gitlab-pierre-diff-stats-added {
+  color: var(--gl-feedback-success-icon-color, #108548);
+}
+
+.gitlab-pierre-diff-stats-deleted {
+  color: var(--gl-feedback-danger-icon-color, #dd2b0e);
+}
+
+.gitlab-pierre-settings-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 1000;
+  display: grid;
+  gap: 0.75rem;
+  width: min(20rem, calc(100vw - 2rem));
+  padding: 0.875rem;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.75rem;
+  background: var(--gl-background-color-default, #fff);
+  box-shadow:
+    0 0.125rem 0.25rem rgb(0 0 0 / 0.08),
+    0 0.5rem 1.5rem rgb(0 0 0 / 0.12);
+}
+
+.gitlab-pierre-settings-field {
+  display: grid;
+  gap: 0.375rem;
+  color: var(--gl-text-color-default, #1f1e24);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.gitlab-pierre-settings-field select {
+  min-height: 2.5rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.5rem;
+  background: var(--gl-background-color-default, #fff);
+  color: var(--gl-text-color-default, #1f1e24);
+  font: 0.8125rem/1.25 var(--default-regular-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+
+.gitlab-pierre-settings-field select:focus-visible {
+  border-color: var(--gl-link-color-default, #1f75cb);
+  outline: 2px solid color-mix(in srgb, var(--gl-link-color-default, #1f75cb) 28%, transparent);
+  outline-offset: 1px;
+}
+
+.gitlab-pierre-settings-help {
+  margin: 0;
+  color: var(--gl-text-color-subtle, #626168);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+.gitlab-pierre-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.gitlab-pierre-layout-no-sidebar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.gitlab-pierre-sidebar {
+  position: sticky;
+  top: 0.75rem;
+  max-height: calc(100vh - 1.5rem);
+  overflow: hidden;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.625rem;
+  background: var(--gl-background-color-default, #fff);
+}
+
+.gitlab-pierre-file-browser {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+}
+
+.gitlab-pierre-file-browser-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--gl-border-color-default, #dcdcde);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.gitlab-pierre-file-browser-switch {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.5rem;
+  background: var(--gl-background-color-subtle, #f7f7f8);
+}
+
+.gitlab-pierre-file-browser-switch button {
+  min-height: 2rem;
+  padding: 0.25rem 0.625rem;
+  border: 0;
+  background: transparent;
+  color: var(--gl-text-color-subtle, #626168);
+  cursor: pointer;
+  font: 600 0.75rem/1.25 var(--default-regular-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  transition-duration: 120ms;
+  transition-property: background-color, color;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.gitlab-pierre-file-browser-switch button[aria-pressed="true"] {
+  background: var(--gl-background-color-default, #fff);
+  color: var(--gl-text-color-default, #1f1e24);
+}
+
+.gitlab-pierre-file-browser-switch button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--gl-link-color-default, #1f75cb) 28%, transparent);
+  outline-offset: -2px;
+}
+
+.gitlab-pierre-tree {
+  display: block;
+  height: 100%;
+  min-height: 20rem;
+  --trees-border-color-override: var(--gl-border-color-default, #dcdcde);
+  --trees-fg-override: var(--gl-text-color-default, #1f1e24);
+  --trees-selected-bg-override: var(--gl-background-color-strong, #ececef);
+}
+
+.gitlab-pierre-diffs {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.gitlab-pierre-file-list {
+  display: grid;
+  align-content: start;
+  gap: 0.125rem;
+  min-height: 20rem;
+  padding: 0.625rem;
+  overflow: auto;
+}
+
+.gitlab-pierre-file-list-item {
+  display: flex;
+  align-items: center;
+  min-height: 2rem;
+  min-width: 0;
+  padding: 0.375rem 0.5rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--gl-text-color-default, #1f1e24);
+  cursor: pointer;
+  font: 0.8125rem/1.25 var(--default-regular-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  text-align: left;
+}
+
+.gitlab-pierre-file-list-item:hover,
+.gitlab-pierre-file-list-item:focus-visible {
+  background: var(--gl-background-color-subtle, #f7f7f8);
+  outline: none;
+}
+
+.gitlab-pierre-file-list-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gitlab-pierre-diff-card {
+  overflow: hidden;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.625rem;
+  background: var(--gl-background-color-default, #fff);
+}
+
+.gitlab-pierre-diff-card diffs-container {
+  display: block;
+}
+
+.gitlab-pierre-line-comment-button {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 999px;
+  background: var(--gl-background-color-default, #fff);
+  color: var(--gl-text-color-default, #1f1e24);
+  cursor: pointer;
+  font: 600 1rem/1 ui-sans-serif, system-ui, sans-serif;
+}
+
+.gitlab-pierre-line-comment-button:hover,
+.gitlab-pierre-line-comment-button:focus-visible {
+  border-color: var(--gl-link-color-default, #1f75cb);
+  color: var(--gl-link-color-default, #1f75cb);
+  outline: none;
+}
+
+.gitlab-pierre-return-button {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 10000;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.5rem;
+  background: var(--gl-background-color-default, #fff);
+  color: var(--gl-text-color-default, #1f1e24);
+  cursor: pointer;
+  font: 600 0.8125rem/1.25 var(--default-regular-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+
+.gitlab-pierre-toast {
+  position: fixed;
+  right: 1rem;
+  bottom: 4rem;
+  z-index: 10000;
+  max-width: min(28rem, calc(100vw - 2rem));
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.5rem;
+  background: var(--gl-background-color-default, #fff);
+  color: var(--gl-text-color-default, #1f1e24);
+  box-shadow: 0 0.25rem 0.75rem rgb(0 0 0 / 0.12);
+  font: 0.8125rem/1.35 var(--default-regular-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+
+.gitlab-pierre-toast-error {
+  border-color: var(--gl-feedback-danger-icon-color, #dd2b0e);
+}
+
+.gitlab-pierre-toast-success {
+  border-color: var(--gl-feedback-success-icon-color, #108548);
+}
+
+.gitlab-pierre-toast-warning {
+  border-color: var(--gl-feedback-warning-icon-color, #ab6100);
+}
+
+.gitlab-pierre-state {
+  display: grid;
+  gap: 0.375rem;
+  margin-bottom: 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.5rem;
+  background: var(--gl-background-color-subtle, #f7f7f8);
+  color: var(--gl-text-color-default, #1f1e24);
+}
+
+.gitlab-pierre-state-error {
+  border-color: var(--gl-feedback-danger-icon-color, #dd2b0e);
+}
+
+.gitlab-pierre-state a {
+  color: var(--gl-link-color-default, #1f75cb);
+}
+
+@media (max-width: 900px) {
+  .gitlab-pierre-native-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gitlab-pierre-version-controls,
+  .gitlab-pierre-toolbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gitlab-pierre-settings,
+  .gitlab-pierre-settings-button,
+  .gitlab-pierre-native-button,
+  .gitlab-pierre-icon-button {
+    width: 100%;
+  }
+
+  .gitlab-pierre-settings-panel {
+    left: 0;
+    right: auto;
+    width: 100%;
+  }
+
+  .gitlab-pierre-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .gitlab-pierre-sidebar {
+    position: static;
+    max-height: 20rem;
+  }
+
+  .gitlab-pierre-tree {
+    height: 20rem;
+  }
+}
