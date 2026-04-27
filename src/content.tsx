@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
   processPatch,
@@ -15,21 +23,9 @@ import diffCoreStyles from '@pierre-diffs-core-style';
 import './styles.css';
 
 type GitLabChangesPage =
-  | {
-      diffUrl: string;
-      key: string;
-      kind: 'merge-request';
-    }
-  | {
-      diffUrl: string;
-      key: string;
-      kind: 'commit';
-    }
-  | {
-      diffUrl: string;
-      key: string;
-      kind: 'compare';
-    };
+  | { diffUrl: string; key: string; kind: 'merge-request' }
+  | { diffUrl: string; key: string; kind: 'commit' }
+  | { diffUrl: string; key: string; kind: 'compare' };
 
 interface ParsedDiff {
   files: FileDiffMetadata[];
@@ -43,11 +39,21 @@ interface DiffStats {
   files: number;
 }
 
+interface FileStats {
+  additions: number;
+  deletions: number;
+}
+
 interface NativeChangesChrome {
   commitHref: string | null;
   commitShortSha: string | null;
   latestHref: string | null;
   latestText: string | null;
+}
+
+interface MountTargets {
+  diffContainer: HTMLElement;
+  treeContainer: HTMLElement | null;
 }
 
 interface MountState {
@@ -66,6 +72,8 @@ const SETTINGS_STORAGE_KEY = 'gitlabPierre.themeSettings';
 const SETTINGS_PANEL_ID = 'gitlab-pierre-settings-panel';
 const THEME_MODE_OPTIONS = ['system', 'light', 'dark'] as const satisfies readonly ThemeTypes[];
 const DIFF_BACKGROUND_OPTIONS = ['theme', 'gitlab'] as const;
+const FILE_TREE_WIDTH_PX = 320;
+
 const PIERRE_DIFF_BASE_UNSAFE_CSS = `
 pre, code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -73,19 +81,7 @@ pre, code {
 }
 
 [data-diffs-header] {
-  min-height: 3rem;
-  padding-inline: 1rem !important;
-}
-
-[data-header-content],
-[data-title] {
-  min-width: 0;
-}
-
-[data-title] {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none !important;
 }
 
 [data-code] {
@@ -128,6 +124,7 @@ pre, code {
   user-select: none;
 }
 `;
+
 const PIERRE_DIFF_GITLAB_BACKGROUND_CSS = `
 :host {
   --diffs-light-bg: var(--gl-background-color-default, #fff);
@@ -138,16 +135,23 @@ const PIERRE_DIFF_GITLAB_BACKGROUND_CSS = `
   --diffs-bg-hover-override: var(--gl-background-color-strong, #ececef);
 }
 `;
+
 const PIERRE_TREE_UNSAFE_CSS = `
+:host {
+  --trees-border-color-override: transparent;
+  --trees-fg-override: var(--gl-text-color-default, #1f1e24);
+  --trees-selected-bg-override: var(--gl-background-color-strong, #ececef);
+  --trees-selected-fg-override: var(--gl-text-color-default, #1f1e24);
+}
+
 [data-file-tree-search-input] {
-  height: 2.25rem !important;
-  margin: 0.625rem 1rem 0.75rem !important;
-  width: calc(100% - 2rem) !important;
+  display: none !important;
 }
 
 [data-type='item'] {
-  margin-inline: 0.875rem !important;
-  width: calc(100% - 1.75rem) !important;
+  margin-inline: 0 !important;
+  padding-inline: 0.5rem !important;
+  width: 100% !important;
 }
 `;
 
@@ -203,6 +207,7 @@ const THEME_PRESETS = [
 type ThemePresetId = (typeof THEME_PRESETS)[number]['id'];
 type DiffBackgroundMode = (typeof DIFF_BACKGROUND_OPTIONS)[number];
 type DiffViewMode = 'pierre' | 'gitlab';
+type FileBrowserView = 'tree' | 'list';
 
 interface PierreThemeSettings {
   backgroundMode: DiffBackgroundMode;
@@ -301,11 +306,10 @@ function getChangesPage(location: Location): GitLabChangesPage | null {
   return null;
 }
 
-function findMountTargets():
-  | MountTargets
-  | null {
+function findMountTargets(): MountTargets | null {
   const diffContainer = queryFirstHTMLElement([
     '[data-testid="diffs"]',
+    '#diffs',
     '.diffs',
     '.diff-files-holder',
     '.files',
@@ -317,18 +321,14 @@ function findMountTargets():
 
   const treeContainer = queryFirstHTMLElement([
     '[data-testid="file-browser"]',
-    '[data-testid="file-tree"]',
+    '[data-testid="file-tree-container"]',
+    '.diff-tree-list',
+    '.tree-list-holder',
     '.file-tree-holder',
     '.diff-file-browser',
-    '.tree-list-holder',
   ]);
 
   return { diffContainer, treeContainer };
-}
-
-interface MountTargets {
-  diffContainer: HTMLElement;
-  treeContainer: HTMLElement | null;
 }
 
 function queryFirstHTMLElement(selectors: string[]): HTMLElement | null {
@@ -387,14 +387,23 @@ function normalizeDiffPath(path: string | undefined): string | null {
 function getDiffStats(files: FileDiffMetadata[]): DiffStats {
   return files.reduce<DiffStats>(
     (stats, file) => {
-      for (const hunk of file.hunks) {
-        stats.additions += hunk.additionLines;
-        stats.deletions += hunk.deletionLines;
-      }
+      const fileStats = getFileStats(file);
+      stats.additions += fileStats.additions;
+      stats.deletions += fileStats.deletions;
       return stats;
     },
     { additions: 0, deletions: 0, files: files.length }
   );
+}
+
+function getFileStats(file: FileDiffMetadata): FileStats {
+  let additions = 0;
+  let deletions = 0;
+  for (const hunk of file.hunks) {
+    additions += hunk.additionLines;
+    deletions += hunk.deletionLines;
+  }
+  return { additions, deletions };
 }
 
 function getNativeChangesChrome(): NativeChangesChrome {
@@ -417,16 +426,12 @@ function hideNativeGitLabView(targets: MountTargets): void {
   targets.diffContainer.removeAttribute(COMMENT_MODE_ATTR);
   targets.diffContainer.classList.add(HIDDEN_CLASS);
   targets.diffContainer.setAttribute('aria-hidden', 'true');
-  targets.treeContainer?.classList.add(HIDDEN_CLASS);
-  targets.treeContainer?.setAttribute('aria-hidden', 'true');
   document.querySelector(`[${RETURN_BUTTON_ATTR}]`)?.remove();
 }
 
 function revealNativeGitLabView(targets: MountTargets): void {
   targets.diffContainer.classList.remove(HIDDEN_CLASS);
   targets.diffContainer.removeAttribute('aria-hidden');
-  targets.treeContainer?.classList.remove(HIDDEN_CLASS);
-  targets.treeContainer?.removeAttribute('aria-hidden');
 }
 
 function showNativeGitLabViewForCommenting(targets: MountTargets): void {
@@ -457,6 +462,90 @@ function cleanUp(): void {
   });
 }
 
+const IconSpriteContext = createContext<string>('');
+
+function getIconSpriteUrl(): string {
+  const useEl = document.querySelector('use[href*="/assets/icons-"]');
+  if (useEl != null) {
+    const href = useEl.getAttribute('href') ?? '';
+    const hashIdx = href.indexOf('#');
+    return hashIdx === -1 ? href : href.slice(0, hashIdx);
+  }
+  return '';
+}
+
+function GlIcon({
+  name,
+  size = 16,
+  className = '',
+  testid,
+}: {
+  className?: string;
+  name: string;
+  size?: 12 | 16 | 24;
+  testid?: string;
+}): React.JSX.Element {
+  const sprite = useContext(IconSpriteContext);
+  return (
+    <svg
+      aria-hidden="true"
+      className={`gl-icon s${size} gl-fill-current${className ? ` ${className}` : ''}`}
+      data-testid={testid}
+      height={size}
+      width={size}
+    >
+      {sprite !== '' ? <use href={`${sprite}#${name}`} /> : null}
+    </svg>
+  );
+}
+
+function ChevronToggleIcon({ collapsed }: { collapsed: boolean }): React.JSX.Element {
+  return (
+    <svg
+      aria-hidden="true"
+      className="gl-button-icon"
+      fill="none"
+      height={16}
+      viewBox="0 0 16 16"
+      width={16}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d={collapsed ? 'M6.75 4.75L10 8L6.75 11.25' : 'M4.75 6.75L8 10L11.25 6.75'}
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+      />
+    </svg>
+  );
+}
+
+function SidebarToggleIcon(): React.JSX.Element {
+  return (
+    <svg
+      aria-hidden="true"
+      className="gl-button-icon"
+      fill="none"
+      height={16}
+      viewBox="0 0 16 16"
+      width={16}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect
+        height={12.5}
+        rx={1.25}
+        stroke="currentColor"
+        strokeWidth={1.5}
+        width={12.5}
+        x={1.75}
+        y={1.75}
+      />
+      <path d="M5.25 2V14" stroke="currentColor" strokeWidth={1.5} />
+    </svg>
+  );
+}
+
 function PierreChangesView({
   nativeChrome,
   parsed,
@@ -466,12 +555,30 @@ function PierreChangesView({
 }): React.JSX.Element {
   const [themeSettings, setThemeSettings] = usePierreThemeSettings();
   const [viewMode, setViewMode] = useState<DiffViewMode>('pierre');
-  const [fileBrowserView, setFileBrowserView] = useState<'tree' | 'list'>('tree');
+  const [fileBrowserView, setFileBrowserView] = useState<FileBrowserView>('tree');
   const [isFileBrowserVisible, setIsFileBrowserVisible] = useState(true);
-  const [areDiffsCollapsed, setAreDiffsCollapsed] = useState(false);
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(() => new Set());
+  const spriteUrl = useMemo(() => getIconSpriteUrl(), []);
   const diffThemeOptions = useMemo(() => getDiffThemeOptions(themeSettings), [themeSettings]);
   const unsafeCSS = useMemo(() => getPierreDiffUnsafeCSS(themeSettings), [themeSettings]);
   const isPierreView = viewMode === 'pierre';
+
+  const toggleFile = useCallback((path: string) => {
+    setCollapsedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
+  const expandAll = useCallback(() => setCollapsedPaths(new Set()), []);
+  const collapseAll = useCallback(
+    () => setCollapsedPaths(new Set(parsed.paths)),
+    [parsed.paths]
+  );
 
   useEffect(() => {
     const targets = mountState?.targets;
@@ -487,173 +594,361 @@ function PierreChangesView({
   }, [viewMode]);
 
   return (
-    <>
-      <NativeLikeChangesToolbar
-        areDiffsCollapsed={areDiffsCollapsed}
-        isFileBrowserVisible={isFileBrowserVisible}
-        isPierreView={isPierreView}
-        nativeChrome={nativeChrome}
-        onCollapseAll={() => setAreDiffsCollapsed(true)}
-        onExpandAll={() => setAreDiffsCollapsed(false)}
-        onToggleFileBrowser={() => setIsFileBrowserVisible((visible) => !visible)}
-        onToggleView={() => setViewMode((mode) => (mode === 'pierre' ? 'gitlab' : 'pierre'))}
-        settings={themeSettings}
-        stats={parsed.stats}
-        onSettingsChange={setThemeSettings}
-      />
+    <IconSpriteContext.Provider value={spriteUrl}>
+      <div className="mr-version-controls" data-gitlab-pierre="toolbar">
+        <div className="mr-version-menus-container gl-px-5 gl-pb-2 gl-pt-3 gitlab-pierre-toolbar">
+          <button
+            aria-label={isFileBrowserVisible ? 'Hide file browser' : 'Show file browser'}
+            aria-pressed={isFileBrowserVisible}
+            className={`btn-icon gl-mr-3 btn gl-button btn-default btn-md${isFileBrowserVisible ? ' selected' : ''}`}
+            onClick={() => setIsFileBrowserVisible((visible) => !visible)}
+            type="button"
+          >
+            <span className="gl-button-text">
+              <SidebarToggleIcon />
+            </span>
+          </button>
+
+          <PierreVersionContext nativeChrome={nativeChrome} />
+
+          <div className="diff-stats inline-parallel-buttons !gl-ml-auto gl-p-0 is-compare-versions-header gl-hidden @md/panel:gl-inline-flex">
+            <div className="diff-stats-contents">
+              <div className="diff-stats-group">
+                <GlIcon
+                  className="diff-stats-icon gl-fill-icon-subtle"
+                  name="doc-code"
+                  testid="doc-code-icon"
+                />
+                <span className="gl-font-bold gl-text-subtle">
+                  {parsed.stats.files} {parsed.stats.files === 1 ? 'file' : 'files'}
+                </span>
+              </div>
+              <div
+                aria-label={`Added ${parsed.stats.additions} lines. Removed ${parsed.stats.deletions} lines.`}
+                className="gl-flex"
+              >
+                <div className="diff-stats-group gl-flex gl-items-center gl-text-success gl-font-bold">
+                  <span>+</span> <span>{parsed.stats.additions}</span>
+                </div>
+                <div className="diff-stats-group gl-flex gl-items-center gl-text-danger gl-font-bold">
+                  <span>−</span> <span>{parsed.stats.deletions}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="gitlab-pierre-toolbar-actions gl-flex gl-items-center gl-gap-2">
+            <div className="btn-group gl-button-group" role="group">
+              <button
+                aria-label="Expand all files"
+                className="btn gl-button btn-default btn-md btn-icon"
+                disabled={collapsedPaths.size === 0}
+                onClick={expandAll}
+                type="button"
+                title="Expand all files"
+              >
+                <ChevronToggleIcon collapsed={false} />
+              </button>
+              <button
+                aria-label="Collapse all files"
+                className="btn gl-button btn-default btn-md btn-icon"
+                disabled={collapsedPaths.size === parsed.paths.length}
+                onClick={collapseAll}
+                type="button"
+                title="Collapse all files"
+              >
+                <ChevronToggleIcon collapsed />
+              </button>
+            </div>
+            <button
+              aria-pressed={!isPierreView}
+              className="btn gl-button btn-default btn-md"
+              onClick={() => setViewMode((mode) => (mode === 'pierre' ? 'gitlab' : 'pierre'))}
+              type="button"
+            >
+              <span className="gl-button-text">
+                Show {isPierreView ? 'GitLab diffs' : 'Pierre diffs'}
+              </span>
+            </button>
+            <PierreSettingsMenu onChange={setThemeSettings} settings={themeSettings} />
+          </div>
+        </div>
+      </div>
+
       <div
-        className={`gitlab-pierre-layout${isFileBrowserVisible ? '' : ' gitlab-pierre-layout-no-sidebar'}`}
+        className={`gl-flex gl-flex-wrap gitlab-pierre-layout${isFileBrowserVisible ? '' : ' gitlab-pierre-layout-no-sidebar'}`}
         hidden={!isPierreView}
       >
-        <aside className="gitlab-pierre-sidebar" aria-label="Changed files" hidden={!isFileBrowserVisible}>
-          <PierreFileBrowser
-            paths={parsed.paths}
-            view={fileBrowserView}
-            onViewChange={setFileBrowserView}
-          />
-        </aside>
-        <main className="gitlab-pierre-diffs" aria-label="File diffs">
-          {parsed.files.map((file, index) => (
-            <section
-              className="gitlab-pierre-diff-card"
-              data-gitlab-pierre-file={normalizeDiffPath(file.name) ?? file.name}
-              key={`${file.name}:${file.prevName ?? ''}:${index}`}
-            >
-              <FileDiff
-                disableWorkerPool
-                fileDiff={file}
-                key={`${themeSettings.presetId}:${themeSettings.themeType}:${themeSettings.backgroundMode}:${areDiffsCollapsed ? 'collapsed' : 'expanded'}`}
-                renderGutterUtility={(getHoveredLine) => (
-                  <LineCommentButton file={file} getHoveredLine={getHoveredLine} />
-                )}
-                options={{
-                  collapsedContextThreshold: 12,
-                  collapsed: areDiffsCollapsed,
-                  diffStyle: 'unified',
-                  enableGutterUtility: true,
-                  onPostRender: ensurePierreDiffCoreStyles,
-                  overflow: 'wrap',
-                  theme: diffThemeOptions.theme,
-                  themeType: diffThemeOptions.themeType,
-                  unsafeCSS,
-                }}
+        <PierreFileBrowser
+          fileCount={parsed.stats.files}
+          hidden={!isFileBrowserVisible}
+          onViewChange={setFileBrowserView}
+          paths={parsed.paths}
+          view={fileBrowserView}
+        />
+        <div className="diffs-batch gitlab-pierre-diffs-area" data-gitlab-pierre="diffs-area">
+          {parsed.files.map((file, index) => {
+            const path = normalizeDiffPath(file.name) ?? file.name;
+            return (
+              <PierreDiffFile
+                areDiffsCollapsed={collapsedPaths.has(path)}
+                file={file}
+                key={`${path}:${file.prevName ?? ''}:${index}`}
+                onToggle={() => toggleFile(path)}
+                path={path}
+                themeOptions={diffThemeOptions}
+                themeSettingsKey={`${themeSettings.presetId}:${themeSettings.themeType}:${themeSettings.backgroundMode}`}
+                unsafeCSS={unsafeCSS}
               />
-            </section>
-          ))}
-        </main>
+            );
+          })}
+        </div>
       </div>
-    </>
+    </IconSpriteContext.Provider>
   );
 }
 
-function NativeLikeChangesToolbar({
-  areDiffsCollapsed,
-  isFileBrowserVisible,
-  isPierreView,
+function PierreVersionContext({
   nativeChrome,
-  onCollapseAll,
-  onExpandAll,
-  onSettingsChange,
-  onToggleFileBrowser,
-  onToggleView,
-  settings,
-  stats,
 }: {
-  areDiffsCollapsed: boolean;
-  isFileBrowserVisible: boolean;
-  isPierreView: boolean;
   nativeChrome: NativeChangesChrome;
-  onCollapseAll: () => void;
-  onExpandAll: () => void;
-  onSettingsChange: (settings: Partial<PierreThemeSettings>) => void;
-  onToggleFileBrowser: () => void;
-  onToggleView: () => void;
-  settings: PierreThemeSettings;
-  stats: DiffStats;
+}): React.JSX.Element | null {
+  if (nativeChrome.commitShortSha == null && nativeChrome.latestHref == null) {
+    return null;
+  }
+
+  return (
+    <div className="gl-flex gl-items-center gl-gap-3 gl-text-subtle">
+      {nativeChrome.commitShortSha != null ? (
+        <span className="gl-flex gl-items-center gl-gap-2">
+          <span>Viewing commit</span>
+          {nativeChrome.commitHref != null ? (
+            <a className="monospace gl-link" href={nativeChrome.commitHref}>
+              {nativeChrome.commitShortSha}
+            </a>
+          ) : (
+            <span className="monospace">{nativeChrome.commitShortSha}</span>
+          )}
+        </span>
+      ) : null}
+      {nativeChrome.latestHref != null && nativeChrome.latestText != null ? (
+        <a className="btn gl-button btn-default btn-sm" href={nativeChrome.latestHref}>
+          <span className="gl-button-text">{nativeChrome.latestText}</span>
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+function PierreFileBrowser({
+  fileCount,
+  hidden,
+  onViewChange,
+  paths,
+  view,
+}: {
+  fileCount: number;
+  hidden: boolean;
+  onViewChange: (view: FileBrowserView) => void;
+  paths: string[];
+  view: FileBrowserView;
 }): React.JSX.Element {
   return (
-    <div className="gitlab-pierre-native-toolbar">
-      <div className="gitlab-pierre-version-controls">
-        <button
-          aria-label={isFileBrowserVisible ? 'Hide file browser' : 'Show file browser'}
-          aria-pressed={isFileBrowserVisible}
-          className="gitlab-pierre-icon-button"
-          onClick={onToggleFileBrowser}
-          type="button"
+    <div
+      className="rd-app-sidebar diff-tree-list gl-px-5"
+      data-gitlab-pierre="file-browser"
+      hidden={hidden}
+      style={{ width: `${FILE_TREE_WIDTH_PX}px` }}
+    >
+      <div className="diff-tree-list-floating-wrapper">
+        <section
+          aria-labelledby="gitlab-pierre-tree-list-title"
+          className="tree-list-holder gl-flex gl-flex-col"
+          data-testid="file-tree-container"
         >
-          <span className="gitlab-pierre-sidebar-icon" aria-hidden="true" />
-        </button>
-        {nativeChrome.commitShortSha != null ? (
-          <div className="gitlab-pierre-commit-context">
-            Viewing commit{' '}
-            {nativeChrome.commitHref != null ? (
-              <a className="monospace gl-link" href={nativeChrome.commitHref}>
-                {nativeChrome.commitShortSha}
-              </a>
-            ) : (
-              <span className="monospace">{nativeChrome.commitShortSha}</span>
-            )}
+          <div className="gl-mb-3 gl-flex gl-items-center">
+            <h2
+              aria-label="File browser"
+              className="gl-my-0 gl-inline-block gl-text-base"
+              id="gitlab-pierre-tree-list-title"
+            >
+              Files
+            </h2>
+            <span
+              aria-hidden="true"
+              className="gl-ml-2 gl-badge badge badge-pill badge-neutral"
+            >
+              <span className="gl-badge-content">{fileCount}</span>
+            </span>
+            <div className="gl-ml-auto gl-button-group btn-group" role="group">
+              <button
+                aria-label="List view"
+                aria-pressed={view === 'list'}
+                className={`btn gl-button btn-default btn-md btn-icon${view === 'list' ? ' selected' : ''}`}
+                onClick={() => onViewChange('list')}
+                title="List view"
+                type="button"
+              >
+                <GlIcon name="list-bulleted" testid="list-bulleted-icon" />
+              </button>
+              <button
+                aria-label="Tree view"
+                aria-pressed={view === 'tree'}
+                className={`btn gl-button btn-default btn-md btn-icon${view === 'tree' ? ' selected' : ''}`}
+                onClick={() => onViewChange('tree')}
+                title="Tree view"
+                type="button"
+              >
+                <GlIcon name="file-tree" testid="file-tree-icon" />
+              </button>
+            </div>
           </div>
-        ) : null}
-        {nativeChrome.latestHref != null && nativeChrome.latestText != null ? (
-          <a className="gitlab-pierre-native-button" href={nativeChrome.latestHref}>
-            {nativeChrome.latestText}
-          </a>
-        ) : null}
-      </div>
-
-      <div className="gitlab-pierre-toolbar-actions">
-        <DiffStatsSummary stats={stats} />
-        <div className="gitlab-pierre-button-group" role="group" aria-label="Expand or collapse files">
-          <button
-            aria-label="Expand all files"
-            className="gitlab-pierre-icon-button"
-            disabled={!areDiffsCollapsed}
-            onClick={onExpandAll}
-            type="button"
-          >
-            <span aria-hidden="true">↧</span>
-          </button>
-          <button
-            aria-label="Collapse all files"
-            className="gitlab-pierre-icon-button"
-            disabled={areDiffsCollapsed}
-            onClick={onCollapseAll}
-            type="button"
-          >
-            <span aria-hidden="true">↥</span>
-          </button>
-        </div>
-        <button
-          aria-pressed={!isPierreView}
-          className="gitlab-pierre-native-button"
-          onClick={onToggleView}
-          type="button"
-        >
-          Show {isPierreView ? 'GitLab diffs' : 'Pierre diffs'}
-        </button>
-        <PierreSettingsMenu settings={settings} onChange={onSettingsChange} />
+          <nav aria-label="File tree" className="mr-tree-list">
+            {view === 'tree' ? (
+              <PierreFileTree paths={paths} />
+            ) : (
+              <PierreFileList paths={paths} />
+            )}
+          </nav>
+        </section>
       </div>
     </div>
   );
 }
 
-function DiffStatsSummary({ stats }: { stats: DiffStats }): React.JSX.Element {
+function PierreDiffFile({
+  areDiffsCollapsed,
+  file,
+  onToggle,
+  path,
+  themeOptions,
+  themeSettingsKey,
+  unsafeCSS,
+}: {
+  areDiffsCollapsed: boolean;
+  file: FileDiffMetadata;
+  onToggle: () => void;
+  path: string;
+  themeOptions: { theme: Record<'dark' | 'light', DiffsThemeNames>; themeType: ThemeTypes };
+  themeSettingsKey: string;
+  unsafeCSS: string;
+}): React.JSX.Element {
+  const stats = useMemo(() => getFileStats(file), [file]);
+  const fileId = `gitlab-pierre-file-${hashPath(path)}`;
+  const contentId = `gitlab-pierre-content-${hashPath(path)}`;
+
   return (
-    <div className="gitlab-pierre-diff-stats" aria-label={`${stats.files} files changed, ${stats.additions} additions, ${stats.deletions} deletions`}>
-      <span className="gitlab-pierre-diff-stats-files">{stats.files} {stats.files === 1 ? 'file' : 'files'}</span>
-      <span className="gitlab-pierre-diff-stats-added">+ {stats.additions}</span>
-      <span className="gitlab-pierre-diff-stats-deleted">− {stats.deletions}</span>
+    <div
+      className="diff-file file-holder has-body"
+      data-gitlab-pierre-file={path}
+      data-path={path}
+      id={fileId}
+    >
+      <div
+        className="js-file-title file-title file-title-flex-parent gl-rounded-bl-none gl-rounded-br-none !gl-border-0"
+        data-testid="file-title-container"
+      >
+        <div className="file-header-content">
+          <button
+            aria-controls={contentId}
+            aria-expanded={!areDiffsCollapsed}
+            aria-label={areDiffsCollapsed ? 'Show file contents' : 'Hide file contents'}
+            className="btn-icon gl-mr-2 btn gl-button btn-default btn-sm btn-default-tertiary"
+            onClick={onToggle}
+            type="button"
+          >
+            <span className="gl-button-text">
+              <ChevronToggleIcon collapsed={areDiffsCollapsed} />
+            </span>
+          </button>
+          <a
+            className="gl-mr-2 gl-break-all !gl-no-underline"
+            href={`#${fileId}`}
+          >
+            <strong className="file-title-name" data-testid="file-name-content" title={path}>
+              {path}
+            </strong>
+          </a>
+          <button
+            aria-label="Copy file path"
+            className="btn gl-button btn-default btn-sm btn-default-tertiary btn-icon"
+            data-testid="diff-file-copy-clipboard"
+            onClick={() => copyToClipboard(path)}
+            title="Copy file path"
+            type="button"
+          >
+            <GlIcon name="copy-to-clipboard" testid="copy-to-clipboard-icon" />
+          </button>
+        </div>
+        <div className="file-actions gl-ml-auto gl-flex gl-items-center gl-self-start">
+          <div className="diff-stats gl-hidden @sm/panel:!gl-inline-flex">
+            <div className="diff-stats-contents">
+              <div
+                aria-label={`Added ${stats.additions} lines. Removed ${stats.deletions} lines.`}
+                className="gl-flex"
+              >
+                <div className="diff-stats-group gl-flex gl-items-center gl-text-success gl-font-bold">
+                  <span>+</span> <span>{stats.additions}</span>
+                </div>
+                <div className="diff-stats-group gl-flex gl-items-center gl-text-danger gl-font-bold">
+                  <span>−</span> <span>{stats.deletions}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        className="diff-content gl-rounded-none gl-rounded-bl-lg gl-rounded-br-lg gl-border-0"
+        data-testid="content-area"
+        hidden={areDiffsCollapsed}
+        id={contentId}
+      >
+        <FileDiff
+          disableWorkerPool
+          fileDiff={file}
+          key={`${themeSettingsKey}:${areDiffsCollapsed ? 'c' : 'e'}`}
+          options={{
+            collapsedContextThreshold: 12,
+            collapsed: false,
+            diffStyle: 'unified',
+            enableGutterUtility: true,
+            onPostRender: ensurePierreDiffCoreStyles,
+            overflow: 'wrap',
+            theme: themeOptions.theme,
+            themeType: themeOptions.themeType,
+            unsafeCSS,
+          }}
+          renderGutterUtility={(getHoveredLine) => (
+            <LineCommentButton file={file} getHoveredLine={getHoveredLine} />
+          )}
+        />
+      </div>
     </div>
+  );
+}
+
+function hashPath(path: string): string {
+  let hash = 0;
+  for (let i = 0; i < path.length; i++) {
+    hash = ((hash << 5) - hash + path.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function copyToClipboard(text: string): void {
+  navigator.clipboard?.writeText(text).then(
+    () => showToast('File path copied.', 'success'),
+    () => showToast('Could not copy file path.', 'error')
   );
 }
 
 function PierreSettingsMenu({
-  settings,
   onChange,
+  settings,
 }: {
-  settings: PierreThemeSettings;
   onChange: (settings: Partial<PierreThemeSettings>) => void;
+  settings: PierreThemeSettings;
 }): React.JSX.Element {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -685,11 +980,14 @@ function PierreSettingsMenu({
       <button
         aria-controls={SETTINGS_PANEL_ID}
         aria-expanded={isOpen}
-        className="gitlab-pierre-settings-button"
+        className="btn gl-button btn-default btn-md gl-dropdown-toggle"
         onClick={() => setIsOpen((open) => !open)}
         type="button"
       >
-        Theme: {activePreset.label}
+        <span className="gl-button-text gl-flex gl-items-center gl-gap-2">
+          <span>Theme: {activePreset.label}</span>
+          <GlIcon className="dropdown-chevron" name="chevron-down" testid="chevron-down-icon" />
+        </span>
       </button>
       {isOpen ? (
         <div
@@ -701,10 +999,11 @@ function PierreSettingsMenu({
           <label className="gitlab-pierre-settings-field">
             <span>Theme</span>
             <select
-              value={settings.presetId}
+              className="gl-form-input form-control"
               onChange={(event) => {
                 onChange({ presetId: event.currentTarget.value as ThemePresetId });
               }}
+              value={settings.presetId}
             >
               {THEME_PRESETS.map((preset) => (
                 <option key={preset.id} value={preset.id}>
@@ -716,10 +1015,11 @@ function PierreSettingsMenu({
           <label className="gitlab-pierre-settings-field">
             <span>Mode</span>
             <select
-              value={settings.themeType}
+              className="gl-form-input form-control"
               onChange={(event) => {
                 onChange({ themeType: event.currentTarget.value as ThemeTypes });
               }}
+              value={settings.themeType}
             >
               {THEME_MODE_OPTIONS.map((themeType) => (
                 <option key={themeType} value={themeType}>
@@ -731,10 +1031,11 @@ function PierreSettingsMenu({
           <label className="gitlab-pierre-settings-field">
             <span>Diff background</span>
             <select
-              value={settings.backgroundMode}
+              className="gl-form-input form-control"
               onChange={(event) => {
                 onChange({ backgroundMode: event.currentTarget.value as DiffBackgroundMode });
               }}
+              value={settings.backgroundMode}
             >
               <option value="theme">Theme background</option>
               <option value="gitlab">GitLab background</option>
@@ -932,10 +1233,8 @@ function LineCommentButton({
 }): React.JSX.Element {
   return (
     <button
-      className="gitlab-pierre-line-comment-button"
-      type="button"
       aria-label="Comment on this line"
-      title="Comment on this line"
+      className="gitlab-pierre-line-comment-button"
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -948,6 +1247,8 @@ function LineCommentButton({
 
         openNativeCommentForLine(file, hoveredLine);
       }}
+      title="Comment on this line"
+      type="button"
     >
       +
     </button>
@@ -1005,7 +1306,9 @@ function getDiffFilePaths(file: FileDiffMetadata): string[] {
 }
 
 function findNativeDiffFiles(paths: string[]): HTMLElement[] {
-  const diffFiles = Array.from(document.querySelectorAll<HTMLElement>('.diff-file'));
+  const diffFiles = Array.from(
+    document.querySelectorAll<HTMLElement>(`.${HIDDEN_CLASS} .diff-file, .gitlab-pierre-native-hidden .diff-file`)
+  );
   return diffFiles.filter((diffFile) => nativeDiffFileMatchesPath(diffFile, paths));
 }
 
@@ -1103,7 +1406,7 @@ function showReturnToPierreButton(targets: MountTargets): void {
   if (document.querySelector(`[${RETURN_BUTTON_ATTR}]`) != null) return;
 
   const button = document.createElement('button');
-  button.className = 'gitlab-pierre-return-button';
+  button.className = 'btn gl-button btn-confirm btn-md gitlab-pierre-return-button';
   button.type = 'button';
   button.setAttribute(RETURN_BUTTON_ATTR, 'true');
   button.textContent = 'Return to Pierre view';
@@ -1135,41 +1438,6 @@ function showToast(message: string, kind: 'error' | 'success' | 'warning'): void
   }, 4000);
 }
 
-function PierreFileBrowser({
-  onViewChange,
-  paths,
-  view,
-}: {
-  onViewChange: (view: 'tree' | 'list') => void;
-  paths: string[];
-  view: 'tree' | 'list';
-}): React.JSX.Element {
-  return (
-    <div className="gitlab-pierre-file-browser">
-      <div className="gitlab-pierre-file-browser-header">
-        <span>Files</span>
-        <div className="gitlab-pierre-file-browser-switch" role="group" aria-label="File browser view">
-          <button
-            aria-pressed={view === 'tree'}
-            onClick={() => onViewChange('tree')}
-            type="button"
-          >
-            Tree
-          </button>
-          <button
-            aria-pressed={view === 'list'}
-            onClick={() => onViewChange('list')}
-            type="button"
-          >
-            List
-          </button>
-        </div>
-      </div>
-      {view === 'tree' ? <PierreFileTree paths={paths} /> : <PierreFileList paths={paths} />}
-    </div>
-  );
-}
-
 function PierreFileTree({ paths }: { paths: string[] }): React.JSX.Element {
   const model = useMemo(
     () =>
@@ -1193,12 +1461,7 @@ function PierreFileTree({ paths }: { paths: string[] }): React.JSX.Element {
     };
   }, [model]);
 
-  return (
-    <FileTree
-      className="gitlab-pierre-tree"
-      model={model}
-    />
-  );
+  return <FileTree className="gitlab-pierre-tree" model={model} />;
 }
 
 function PierreFileList({ paths }: { paths: string[] }): React.JSX.Element {
