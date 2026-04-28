@@ -84,7 +84,7 @@ const SETTINGS_STORAGE_KEY = 'gitlabPierre.themeSettings';
 const SETTINGS_PANEL_ID = 'gitlab-pierre-settings-panel';
 const THEME_MODE_OPTIONS = ['system', 'light', 'dark'] as const satisfies readonly ThemeTypes[];
 const DIFF_BACKGROUND_OPTIONS = ['theme', 'gitlab'] as const;
-const FILE_TREE_WIDTH_PX = 320;
+const FILE_TREE_WIDTH_PX = 288;
 
 const PIERRE_DIFF_BASE_UNSAFE_CSS = `
 pre, code {
@@ -277,14 +277,14 @@ const PIERRE_TREE_UNSAFE_CSS = `
   --trees-fg-override: var(--gl-text-color-default, #1f1e24);
   --trees-fg-muted-override: var(--gl-text-color-subtle, #626168);
   --trees-font-family-override: var(--default-regular-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-  --trees-font-size-override: 14px;
-  --trees-font-weight-regular-override: 600;
-  --trees-font-weight-semibold-override: 700;
-  --trees-item-height: 32px;
+  --trees-font-size-override: 13px;
+  --trees-font-weight-regular-override: 400;
+  --trees-font-weight-semibold-override: 600;
+  --trees-item-height: 28px;
   --trees-item-padding-x-override: 6px;
   --trees-item-margin-x-override: 0;
   --trees-item-row-gap-override: 6px;
-  --trees-level-gap-override: 12px;
+  --trees-level-gap-override: 6px;
   --trees-icon-width-override: 18px;
   --trees-border-radius-override: 0;
   --trees-padding-inline-override: 0;
@@ -361,8 +361,8 @@ const PIERRE_TREE_UNSAFE_CSS = `
 
 [data-item-section='content'] {
   color: var(--gl-text-color-default, #1f1e24) !important;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 [data-item-git-status] > [data-item-section='content'] {
@@ -372,13 +372,13 @@ const PIERRE_TREE_UNSAFE_CSS = `
 [data-item-section='decoration'] {
   color: var(--gl-text-color-subtle, #626168) !important;
   font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 [data-item-section='git'] {
   font-variant-numeric: tabular-nums;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 [data-item-section='spacing-item'] {
@@ -1128,7 +1128,7 @@ function PierreFileBrowser({
 }): React.JSX.Element {
   return (
     <div
-      className="rd-app-sidebar diff-tree-list gl-px-5 gitlab-pierre-file-browser"
+      className="rd-app-sidebar diff-tree-list gl-px-3 gitlab-pierre-file-browser"
       data-gitlab-pierre="file-browser"
       hidden={hidden}
       style={{ width: `${FILE_TREE_WIDTH_PX}px` }}
@@ -1856,7 +1856,7 @@ function PierreFileTree({
         flattenEmptyDirectories: true,
         gitStatus: getGitStatusEntries(fileInfoByPath),
         initialExpansion: 'open',
-        itemHeight: 32,
+        itemHeight: 28,
         onSelectionChange: ([selectedPath]) => {
           if (selectedPath == null) return;
           scrollToFile(selectedPath);

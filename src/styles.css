@@ -40,6 +40,7 @@
   min-height: 16rem;
   height: calc(100vh - 12rem);
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .gitlab-pierre-file-browser {
@@ -111,6 +112,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .gitlab-pierre-file-list-empty {
