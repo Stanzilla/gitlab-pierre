@@ -688,14 +688,43 @@ function getNativeChangesChrome(): NativeChangesChrome {
   };
 }
 
+const NATIVE_BAR_MOVED_ATTR = 'data-gitlab-pierre-bar-moved';
+const nativeBarPlaceholders = new WeakMap<HTMLElement, Comment>();
+
+function detachNativeCompareBar(targets: MountTargets): void {
+  const bar = targets.diffContainer.querySelector<HTMLElement>(
+    '.mr-version-controls, .compare-versions-header'
+  );
+  if (bar == null || bar.hasAttribute(NATIVE_BAR_MOVED_ATTR)) return;
+  const placeholder = document.createComment('gitlab-pierre-bar-placeholder');
+  bar.parentNode?.insertBefore(placeholder, bar);
+  nativeBarPlaceholders.set(bar, placeholder);
+  bar.setAttribute(NATIVE_BAR_MOVED_ATTR, 'true');
+  const shell = document.querySelector<HTMLElement>(`[${EXTENSION_ATTR}="shell"]`);
+  const anchor = shell ?? targets.diffContainer;
+  anchor.parentNode?.insertBefore(bar, anchor);
+}
+
+function restoreNativeCompareBar(): void {
+  for (const bar of document.querySelectorAll<HTMLElement>(`[${NATIVE_BAR_MOVED_ATTR}]`)) {
+    const placeholder = nativeBarPlaceholders.get(bar);
+    bar.removeAttribute(NATIVE_BAR_MOVED_ATTR);
+    if (placeholder?.parentNode == null) continue;
+    placeholder.parentNode.replaceChild(bar, placeholder);
+    nativeBarPlaceholders.delete(bar);
+  }
+}
+
 function hideNativeGitLabView(targets: MountTargets): void {
   targets.diffContainer.removeAttribute(COMMENT_MODE_ATTR);
+  detachNativeCompareBar(targets);
   targets.diffContainer.classList.add(HIDDEN_CLASS);
   targets.diffContainer.setAttribute('aria-hidden', 'true');
   document.querySelector(`[${RETURN_BUTTON_ATTR}]`)?.remove();
 }
 
 function revealNativeGitLabView(targets: MountTargets): void {
+  restoreNativeCompareBar();
   targets.diffContainer.classList.remove(HIDDEN_CLASS);
   targets.diffContainer.removeAttribute('aria-hidden');
 }
@@ -717,6 +746,8 @@ function cleanUp(): void {
   document.querySelectorAll(`[${EXTENSION_ATTR}]`).forEach((element) => {
     element.remove();
   });
+
+  restoreNativeCompareBar();
 
   document.querySelectorAll(`.${HIDDEN_CLASS}`).forEach((element) => {
     element.classList.remove(HIDDEN_CLASS);
@@ -968,33 +999,7 @@ function PierreChangesView({
         <div className="mr-version-menus-container gl-px-5 gl-pb-2 gl-pt-3 gitlab-pierre-toolbar">
           <PierreVersionContext nativeChrome={nativeChrome} />
 
-          <div className="diff-stats inline-parallel-buttons !gl-ml-auto gl-p-0 is-compare-versions-header gl-hidden @md/panel:gl-inline-flex">
-            <div className="diff-stats-contents">
-              <div className="diff-stats-group">
-                <GlIcon
-                  className="diff-stats-icon gl-fill-icon-subtle"
-                  name="doc-code"
-                  testid="doc-code-icon"
-                />
-                <span className="gl-font-bold gl-text-subtle">
-                  {parsed.stats.files} {parsed.stats.files === 1 ? 'file' : 'files'}
-                </span>
-              </div>
-              <div
-                aria-label={`Added ${parsed.stats.additions} lines. Removed ${parsed.stats.deletions} lines.`}
-                className="gl-flex"
-              >
-                <div className="diff-stats-group gl-flex gl-items-center gl-text-success gl-font-bold">
-                  <span>+</span> <span>{parsed.stats.additions}</span>
-                </div>
-                <div className="diff-stats-group gl-flex gl-items-center gl-text-danger gl-font-bold">
-                  <span>−</span> <span>{parsed.stats.deletions}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="gitlab-pierre-toolbar-actions gl-flex gl-items-center gl-gap-2">
+          <div className="gitlab-pierre-toolbar-actions gl-flex gl-items-center gl-gap-2 gl-ml-auto">
             <button
               aria-label={isFileBrowserVisible ? 'Hide file browser' : 'Show file browser'}
               aria-pressed={isFileBrowserVisible}
