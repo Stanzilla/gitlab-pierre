@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
+  parseDiffFromFile,
   processPatch,
   type DiffsThemeNames,
   type FileDiffMetadata,
@@ -17,7 +18,12 @@ import {
 } from '@pierre/diffs';
 import { FileDiff } from '@pierre/diffs/react';
 import { FileTree } from '@pierre/trees/react';
-import { FileTree as FileTreeModel } from '@pierre/trees';
+import {
+  FileTree as FileTreeModel,
+  type FileTreeRowDecorationContext,
+  type GitStatus,
+  type GitStatusEntry,
+} from '@pierre/trees';
 import diffCoreStyles from '@pierre-diffs-core-style';
 
 import './styles.css';
@@ -28,6 +34,7 @@ type GitLabChangesPage =
   | { diffUrl: string; key: string; kind: 'compare' };
 
 interface ParsedDiff {
+  fileInfoByPath: Map<string, FileBrowserFileInfo>;
   files: FileDiffMetadata[];
   paths: string[];
   stats: DiffStats;
@@ -42,6 +49,11 @@ interface DiffStats {
 interface FileStats {
   additions: number;
   deletions: number;
+}
+
+interface FileBrowserFileInfo {
+  stats: FileStats;
+  status: GitStatus;
 }
 
 interface NativeChangesChrome {
@@ -102,8 +114,129 @@ pre, code {
   min-width: 0 !important;
 }
 
-[data-gutter] [data-separator] {
+[data-gutter] [data-separator]:not([data-separator='line-info']) {
   visibility: hidden;
+}
+
+[data-gutter] [data-separator='line-info'] {
+  visibility: visible !important;
+  overflow: hidden;
+}
+
+[data-gutter] [data-separator='line-info'] [data-separator-wrapper] {
+  display: grid !important;
+  visibility: visible !important;
+  inset-inline: 0 !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  box-sizing: border-box;
+  max-width: 100% !important;
+  width: 100%;
+  padding-inline: 0 !important;
+  height: 32px;
+  align-items: stretch;
+  background: var(--gl-background-color-subtle, var(--diffs-bg-separator));
+  border-bottom: 1px solid var(--gl-border-color-default, color-mix(in srgb, currentColor 18%, transparent));
+}
+
+[data-gutter] [data-separator='line-info'] [data-separator-wrapper][data-separator-multi-button] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+}
+
+[data-gutter] [data-separator='line-info'][data-separator-first] [data-separator-wrapper][data-separator-multi-button],
+[data-gutter] [data-separator='line-info'][data-separator-last] [data-separator-wrapper][data-separator-multi-button] {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+[data-content] [data-separator='line-info'] [data-separator-wrapper] {
+  display: flex !important;
+  visibility: visible !important;
+  inset-inline: 0 !important;
+  box-sizing: border-box;
+  max-width: 100% !important;
+  width: 100% !important;
+  padding-inline: 0 !important;
+  height: 32px;
+  align-items: stretch;
+  background: var(--gl-background-color-subtle, var(--diffs-bg-separator));
+  border-bottom: 1px solid var(--gl-border-color-default, color-mix(in srgb, currentColor 18%, transparent));
+  color: var(--gl-text-color-subtle, var(--diffs-fg-number));
+}
+
+[data-gutter] [data-expand-button] {
+  display: grid !important;
+  inline-size: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  height: 32px !important;
+  overflow: hidden;
+  place-items: center;
+  border: 0 !important;
+  border-right: 1px solid var(--gl-border-color-default, color-mix(in srgb, currentColor 18%, transparent)) !important;
+  background: var(--gl-background-color-subtle, var(--diffs-bg-separator));
+  color: var(--gl-link-color-default, var(--diffs-fg-number)) !important;
+}
+
+[data-gutter] [data-expand-all-button],
+[data-gutter] [data-separator-content],
+[data-content] [data-expand-button] {
+  display: none !important;
+}
+
+[data-gutter] [data-expand-button]:hover,
+[data-gutter] [data-expand-button]:focus-visible {
+  background: var(--gl-background-color-strong, var(--diffs-bg-hover)) !important;
+  color: var(--gl-link-color-hover, var(--diffs-fg)) !important;
+  outline: none;
+}
+
+[data-gutter] [data-expand-button]:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--gl-focus-ring-inner-color, var(--gl-link-color-default, currentColor));
+}
+
+[data-gutter] [data-expand-button] [data-icon] {
+  display: none;
+  width: 16px;
+  height: 16px;
+}
+
+[data-gutter] [data-expand-button]::before,
+[data-gutter] [data-expand-button]::after {
+  width: 7px;
+  height: 7px;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  content: "";
+}
+
+[data-gutter] [data-expand-up]::before {
+  transform: translateY(2px) rotate(-135deg);
+}
+
+[data-gutter] [data-expand-down]::before {
+  transform: translateY(-2px) rotate(45deg);
+}
+
+[data-gutter] [data-expand-both] {
+  gap: 6px;
+}
+
+[data-gutter] [data-expand-both]::before {
+  transform: translateY(2px) rotate(-135deg);
+}
+
+[data-gutter] [data-expand-both]::after {
+  transform: translateY(-2px) rotate(45deg);
+}
+
+[data-content] [data-separator-content] {
+  display: flex !important;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
+  background: var(--gl-background-color-subtle, var(--diffs-bg-separator)) !important;
+  color: var(--gl-text-color-subtle, var(--diffs-fg-number)) !important;
+  font: 12px/18px var(--default-regular-font, system-ui, sans-serif);
 }
 
 [data-line],
@@ -138,20 +271,118 @@ const PIERRE_DIFF_GITLAB_BACKGROUND_CSS = `
 
 const PIERRE_TREE_UNSAFE_CSS = `
 :host {
-  --trees-border-color-override: transparent;
+  --trees-bg-override: transparent;
+  --trees-bg-muted-override: var(--gl-background-color-strong, rgba(115, 117, 127, 0.16));
+  --trees-border-color-override: var(--gl-border-color-default, #dcdcde);
   --trees-fg-override: var(--gl-text-color-default, #1f1e24);
+  --trees-fg-muted-override: var(--gl-text-color-subtle, #626168);
+  --trees-font-family-override: var(--default-regular-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  --trees-font-size-override: 14px;
+  --trees-font-weight-regular-override: 600;
+  --trees-font-weight-semibold-override: 700;
+  --trees-item-height: 32px;
+  --trees-item-padding-x-override: 6px;
+  --trees-item-margin-x-override: 0;
+  --trees-item-row-gap-override: 6px;
+  --trees-level-gap-override: 12px;
+  --trees-icon-width-override: 18px;
+  --trees-border-radius-override: 0;
+  --trees-padding-inline-override: 0;
+  --trees-git-lane-width-override: 22px;
+  --trees-search-bg-override: var(--gl-background-color-default, #fff);
+  --trees-search-fg-override: var(--gl-text-color-default, #1f1e24);
   --trees-selected-bg-override: var(--gl-background-color-strong, #ececef);
   --trees-selected-fg-override: var(--gl-text-color-default, #1f1e24);
+  --trees-git-added-color-override: var(--gl-text-color-success, #108548);
+  --trees-git-deleted-color-override: var(--gl-text-color-danger, #dd2b0e);
+  --trees-git-modified-color-override: var(--gl-text-color-info, #1f75cb);
+  --trees-git-renamed-color-override: var(--gl-text-color-warning, #ab6100);
+  --trees-git-untracked-color-override: var(--gl-text-color-success, #108548);
+}
+
+[data-file-tree-search-container] {
+  position: relative;
+  margin-block: 0 12px !important;
+}
+
+[data-file-tree-search-container]::before,
+[data-file-tree-search-container]::after {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+}
+
+[data-file-tree-search-container]::before {
+  left: 15px;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--gl-text-color-subtle, #626168);
+  border-radius: 50%;
+  transform: translateY(-58%);
+}
+
+[data-file-tree-search-container]::after {
+  left: 27px;
+  top: calc(50% + 6px);
+  width: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--gl-text-color-subtle, #626168);
+  transform: rotate(45deg);
+  transform-origin: left center;
 }
 
 [data-file-tree-search-input] {
-  display: none !important;
+  height: 32px !important;
+  margin-block: 0 !important;
+  padding-inline: 38px 12px !important;
+  border-color: var(--gl-border-color-strong, #89888d) !important;
+  border-radius: 8px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  line-height: 30px !important;
+}
+
+[role='tree'] {
+  gap: 2px !important;
 }
 
 [data-type='item'] {
   margin-inline: 0 !important;
-  padding-inline: 0.5rem !important;
+  padding-inline: 6px 8px !important;
   width: 100% !important;
+  transition: background-color 120ms ease;
+}
+
+[data-type='item'][data-item-selected='true'] {
+  border-radius: 0 !important;
+}
+
+[data-item-section='content'] {
+  color: var(--gl-text-color-default, #1f1e24) !important;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+[data-item-git-status] > [data-item-section='content'] {
+  color: var(--gl-text-color-default, #1f1e24) !important;
+}
+
+[data-item-section='decoration'] {
+  color: var(--gl-text-color-subtle, #626168) !important;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+[data-item-section='git'] {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+[data-item-section='spacing-item'] {
+  border-color: color-mix(in srgb, var(--gl-border-color-default, #dcdcde) 70%, transparent) !important;
 }
 `;
 
@@ -368,15 +599,25 @@ async function fetchPatch(diffUrl: string): Promise<string> {
 
 function parseGitPatch(patch: string, cacheKey: string): ParsedDiff {
   const files = processPatch(patch, cacheKey, true).files;
+  const fileInfoByPath = new Map<string, FileBrowserFileInfo>();
   const paths = Array.from(
     new Set(
       files
-        .map((file) => normalizeDiffPath(file.name))
+        .map((file) => {
+          const path = normalizeDiffPath(file.name);
+          if (path != null && path.length > 0) {
+            fileInfoByPath.set(path, {
+              stats: getFileStats(file),
+              status: getFileGitStatus(file),
+            });
+          }
+          return path;
+        })
         .filter((path): path is string => path != null && path.length > 0)
     )
   );
 
-  return { files, paths, stats: getDiffStats(files) };
+  return { fileInfoByPath, files, paths, stats: getDiffStats(files) };
 }
 
 function normalizeDiffPath(path: string | undefined): string | null {
@@ -404,6 +645,31 @@ function getFileStats(file: FileDiffMetadata): FileStats {
     deletions += hunk.deletionLines;
   }
   return { additions, deletions };
+}
+
+function getFileGitStatus(file: FileDiffMetadata): GitStatus {
+  if (file.type === 'new') return 'added';
+  if (file.type === 'deleted') return 'deleted';
+  if (file.type === 'rename-pure' || file.type === 'rename-changed') return 'renamed';
+  return 'modified';
+}
+
+function getProjectId(): number | null {
+  const script = document.querySelector<HTMLScriptElement>('script.js-sidebar-options');
+  if (script == null) return null;
+  try {
+    const data = JSON.parse(script.textContent ?? '');
+    const endpoint = typeof data?.projectsAutocompleteEndpoint === 'string'
+      ? (data.projectsAutocompleteEndpoint as string)
+      : '';
+    const match = endpoint.match(/[?&]project_id=(\d+)/);
+    if (match?.[1] != null) {
+      return Number.parseInt(match[1], 10);
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 function getNativeChangesChrome(): NativeChangesChrome {
@@ -463,6 +729,107 @@ function cleanUp(): void {
 }
 
 const IconSpriteContext = createContext<string>('');
+const ProjectIdContext = createContext<number | null>(null);
+
+const ZERO_BLOB_SHA = '0000000000000000000000000000000000000000';
+
+async function fetchBlobContents(
+  projectId: number,
+  blobSha: string
+): Promise<string> {
+  if (blobSha === ZERO_BLOB_SHA) {
+    return '';
+  }
+  const response = await fetch(
+    `/api/v4/projects/${projectId}/repository/blobs/${blobSha}/raw`,
+    { credentials: 'same-origin' }
+  );
+  if (!response.ok) {
+    throw new Error(`GitLab returned ${response.status} for blob ${blobSha}`);
+  }
+  return response.text();
+}
+
+function useFullFileDiff(
+  file: FileDiffMetadata,
+  containerRef: React.RefObject<HTMLElement | null>
+): FileDiffMetadata {
+  const projectId = useContext(ProjectIdContext);
+  const [enriched, setEnriched] = useState<FileDiffMetadata | null>(null);
+  const hasRequestedRef = useRef(false);
+
+  useEffect(() => {
+    setEnriched(null);
+    hasRequestedRef.current = false;
+  }, [file]);
+
+  useEffect(() => {
+    if (
+      projectId == null ||
+      file.prevObjectId == null ||
+      file.newObjectId == null ||
+      enriched != null
+    ) {
+      return;
+    }
+
+    const containerNode = containerRef.current;
+    if (containerNode == null) return;
+
+    let cancelled = false;
+
+    const triggerFetch = (): void => {
+      if (hasRequestedRef.current) return;
+      hasRequestedRef.current = true;
+
+      const oldName = normalizeDiffPath(file.prevName) ?? normalizeDiffPath(file.name) ?? file.name;
+      const newName = normalizeDiffPath(file.name) ?? file.name;
+
+      Promise.all([
+        fetchBlobContents(projectId, file.prevObjectId!),
+        fetchBlobContents(projectId, file.newObjectId!),
+      ])
+        .then(([oldContents, newContents]) => {
+          if (cancelled) return;
+          try {
+            const next = parseDiffFromFile(
+              { name: oldName, contents: oldContents },
+              { name: newName, contents: newContents }
+            );
+            setEnriched(next);
+          } catch (error) {
+            console.warn('[GitLab Pierre] Could not build full-file diff.', error);
+            hasRequestedRef.current = false;
+          }
+        })
+        .catch((error: unknown) => {
+          console.warn('[GitLab Pierre] Could not fetch raw file blobs.', error);
+          hasRequestedRef.current = false;
+        });
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            triggerFetch();
+            observer.disconnect();
+            return;
+          }
+        }
+      },
+      { rootMargin: '400px 0px' }
+    );
+    observer.observe(containerNode);
+
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [projectId, file, enriched, containerRef]);
+
+  return enriched ?? file;
+}
 
 function getIconSpriteUrl(): string {
   const useEl = document.querySelector('use[href*="/assets/icons-"]');
@@ -559,6 +926,7 @@ function PierreChangesView({
   const [isFileBrowserVisible, setIsFileBrowserVisible] = useState(true);
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(() => new Set());
   const spriteUrl = useMemo(() => getIconSpriteUrl(), []);
+  const projectId = useMemo(() => getProjectId(), []);
   const diffThemeOptions = useMemo(() => getDiffThemeOptions(themeSettings), [themeSettings]);
   const unsafeCSS = useMemo(() => getPierreDiffUnsafeCSS(themeSettings), [themeSettings]);
   const isPierreView = viewMode === 'pierre';
@@ -595,20 +963,9 @@ function PierreChangesView({
 
   return (
     <IconSpriteContext.Provider value={spriteUrl}>
+      <ProjectIdContext.Provider value={projectId}>
       <div className="mr-version-controls" data-gitlab-pierre="toolbar">
         <div className="mr-version-menus-container gl-px-5 gl-pb-2 gl-pt-3 gitlab-pierre-toolbar">
-          <button
-            aria-label={isFileBrowserVisible ? 'Hide file browser' : 'Show file browser'}
-            aria-pressed={isFileBrowserVisible}
-            className={`btn-icon gl-mr-3 btn gl-button btn-default btn-md${isFileBrowserVisible ? ' selected' : ''}`}
-            onClick={() => setIsFileBrowserVisible((visible) => !visible)}
-            type="button"
-          >
-            <span className="gl-button-text">
-              <SidebarToggleIcon />
-            </span>
-          </button>
-
           <PierreVersionContext nativeChrome={nativeChrome} />
 
           <div className="diff-stats inline-parallel-buttons !gl-ml-auto gl-p-0 is-compare-versions-header gl-hidden @md/panel:gl-inline-flex">
@@ -638,6 +995,18 @@ function PierreChangesView({
           </div>
 
           <div className="gitlab-pierre-toolbar-actions gl-flex gl-items-center gl-gap-2">
+            <button
+              aria-label={isFileBrowserVisible ? 'Hide file browser' : 'Show file browser'}
+              aria-pressed={isFileBrowserVisible}
+              className={`btn-icon btn gl-button btn-default btn-md${isFileBrowserVisible ? ' selected' : ''}`}
+              onClick={() => setIsFileBrowserVisible((visible) => !visible)}
+              title={isFileBrowserVisible ? 'Hide file browser' : 'Show file browser'}
+              type="button"
+            >
+              <span className="gl-button-text">
+                <SidebarToggleIcon />
+              </span>
+            </button>
             <div className="btn-group gl-button-group" role="group">
               <button
                 aria-label="Expand all files"
@@ -680,6 +1049,7 @@ function PierreChangesView({
         hidden={!isPierreView}
       >
         <PierreFileBrowser
+          fileInfoByPath={parsed.fileInfoByPath}
           fileCount={parsed.stats.files}
           hidden={!isFileBrowserVisible}
           onViewChange={setFileBrowserView}
@@ -704,6 +1074,7 @@ function PierreChangesView({
           })}
         </div>
       </div>
+      </ProjectIdContext.Provider>
     </IconSpriteContext.Provider>
   );
 }
@@ -741,12 +1112,14 @@ function PierreVersionContext({
 }
 
 function PierreFileBrowser({
+  fileInfoByPath,
   fileCount,
   hidden,
   onViewChange,
   paths,
   view,
 }: {
+  fileInfoByPath: Map<string, FileBrowserFileInfo>;
   fileCount: number;
   hidden: boolean;
   onViewChange: (view: FileBrowserView) => void;
@@ -755,7 +1128,7 @@ function PierreFileBrowser({
 }): React.JSX.Element {
   return (
     <div
-      className="rd-app-sidebar diff-tree-list gl-px-5"
+      className="rd-app-sidebar diff-tree-list gl-px-5 gitlab-pierre-file-browser"
       data-gitlab-pierre="file-browser"
       hidden={hidden}
       style={{ width: `${FILE_TREE_WIDTH_PX}px` }}
@@ -766,21 +1139,21 @@ function PierreFileBrowser({
           className="tree-list-holder gl-flex gl-flex-col"
           data-testid="file-tree-container"
         >
-          <div className="gl-mb-3 gl-flex gl-items-center">
+          <div className="gl-flex gl-items-center gitlab-pierre-file-browser-header">
             <h2
               aria-label="File browser"
-              className="gl-my-0 gl-inline-block gl-text-base"
+              className="gl-my-0 gl-inline-block gl-text-base gitlab-pierre-file-browser-title"
               id="gitlab-pierre-tree-list-title"
             >
               Files
             </h2>
             <span
               aria-hidden="true"
-              className="gl-ml-2 gl-badge badge badge-pill badge-neutral"
+              className="gl-ml-2 gl-badge badge badge-pill badge-neutral gitlab-pierre-file-count-badge"
             >
               <span className="gl-badge-content">{fileCount}</span>
             </span>
-            <div className="gl-ml-auto gl-button-group btn-group" role="group">
+            <div className="gl-ml-auto gl-button-group btn-group gitlab-pierre-file-view-toggle" role="group">
               <button
                 aria-label="List view"
                 aria-pressed={view === 'list'}
@@ -805,9 +1178,9 @@ function PierreFileBrowser({
           </div>
           <nav aria-label="File tree" className="mr-tree-list">
             {view === 'tree' ? (
-              <PierreFileTree paths={paths} />
+              <PierreFileTree fileInfoByPath={fileInfoByPath} paths={paths} />
             ) : (
-              <PierreFileList paths={paths} />
+              <PierreFileList fileInfoByPath={fileInfoByPath} paths={paths} />
             )}
           </nav>
         </section>
@@ -836,6 +1209,8 @@ function PierreDiffFile({
   const stats = useMemo(() => getFileStats(file), [file]);
   const fileId = `gitlab-pierre-file-${hashPath(path)}`;
   const contentId = `gitlab-pierre-content-${hashPath(path)}`;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const fileDiff = useFullFileDiff(file, containerRef);
 
   return (
     <div
@@ -843,6 +1218,7 @@ function PierreDiffFile({
       data-gitlab-pierre-file={path}
       data-path={path}
       id={fileId}
+      ref={containerRef}
     >
       <div
         className="js-file-title file-title file-title-flex-parent gl-rounded-bl-none gl-rounded-br-none !gl-border-0"
@@ -906,13 +1282,15 @@ function PierreDiffFile({
       >
         <FileDiff
           disableWorkerPool
-          fileDiff={file}
-          key={`${themeSettingsKey}:${areDiffsCollapsed ? 'c' : 'e'}`}
+          fileDiff={fileDiff}
+          key={`${themeSettingsKey}:${areDiffsCollapsed ? 'c' : 'e'}:${fileDiff.isPartial ? 'p' : 'f'}`}
           options={{
             collapsedContextThreshold: 12,
             collapsed: false,
             diffStyle: 'unified',
             enableGutterUtility: true,
+            expansionLineCount: 20,
+            hunkSeparators: 'line-info',
             onPostRender: ensurePierreDiffCoreStyles,
             overflow: 'wrap',
             theme: themeOptions.theme,
@@ -1222,6 +1600,33 @@ function ensurePierreDiffCoreStyles(container: HTMLElement): void {
   if (style.textContent !== diffCoreStyles) {
     style.textContent = diffCoreStyles;
   }
+
+  enhancePierreExpandButtons(shadowRoot);
+}
+
+function enhancePierreExpandButtons(shadowRoot: ShadowRoot): void {
+  shadowRoot.querySelectorAll<HTMLElement>('[data-expand-button]').forEach((button) => {
+    if (button.hasAttribute('data-gitlab-pierre-expand-enhanced')) return;
+
+  const label = getPierreExpandButtonLabel(button);
+  button.setAttribute('aria-label', label);
+  button.removeAttribute('title');
+    button.setAttribute('tabindex', '0');
+    button.setAttribute('data-gitlab-pierre-expand-enhanced', '');
+    button.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      button.click();
+    });
+  });
+}
+
+function getPierreExpandButtonLabel(button: HTMLElement): string {
+  if (button.hasAttribute('data-expand-up')) return 'Previous 20 lines';
+  if (button.hasAttribute('data-expand-down')) return 'Next 20 lines';
+  if (button.hasAttribute('data-expand-both')) return 'Expand surrounding context';
+  if (button.hasAttribute('data-expand-all-button')) return 'Expand all hidden lines';
+  return 'Expand hidden lines';
 }
 
 function LineCommentButton({
@@ -1438,21 +1843,39 @@ function showToast(message: string, kind: 'error' | 'success' | 'warning'): void
   }, 4000);
 }
 
-function PierreFileTree({ paths }: { paths: string[] }): React.JSX.Element {
+function PierreFileTree({
+  fileInfoByPath,
+  paths,
+}: {
+  fileInfoByPath: Map<string, FileBrowserFileInfo>;
+  paths: string[];
+}): React.JSX.Element {
   const model = useMemo(
     () =>
       new FileTreeModel({
         flattenEmptyDirectories: true,
+        gitStatus: getGitStatusEntries(fileInfoByPath),
         initialExpansion: 'open',
+        itemHeight: 32,
         onSelectionChange: ([selectedPath]) => {
           if (selectedPath == null) return;
           scrollToFile(selectedPath);
         },
         paths,
+        renderRowDecoration: ({ item }: FileTreeRowDecorationContext) => {
+          if (item.kind === 'directory') return null;
+          const info = fileInfoByPath.get(item.path);
+          if (info == null) return null;
+          return {
+            text: formatFileStats(info.stats),
+            title: `Added ${info.stats.additions} lines. Removed ${info.stats.deletions} lines.`,
+          };
+        },
         search: true,
+        searchBlurBehavior: 'retain',
         unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
       }),
-    [paths]
+    [fileInfoByPath, paths]
   );
 
   useEffect(() => {
@@ -1461,26 +1884,113 @@ function PierreFileTree({ paths }: { paths: string[] }): React.JSX.Element {
     };
   }, [model]);
 
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      const input = model
+        .getFileTreeContainer()
+        ?.shadowRoot?.querySelector<HTMLInputElement>('[data-file-tree-search-input]');
+      if (input != null) {
+        input.placeholder = 'Search (e.g. *.vue) (F)';
+      }
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [model]);
+
   return <FileTree className="gitlab-pierre-tree" model={model} />;
 }
 
-function PierreFileList({ paths }: { paths: string[] }): React.JSX.Element {
+function PierreFileList({
+  fileInfoByPath,
+  paths,
+}: {
+  fileInfoByPath: Map<string, FileBrowserFileInfo>;
+  paths: string[];
+}): React.JSX.Element {
+  const [query, setQuery] = useState('');
+  const trimmedQuery = query.trim().toLowerCase();
+  const filteredPaths = useMemo(
+    () =>
+      trimmedQuery === ''
+        ? paths
+        : paths.filter((path) => path.toLowerCase().includes(trimmedQuery)),
+    [paths, trimmedQuery]
+  );
+
   return (
-    <div className="gitlab-pierre-file-list" role="list">
-      {paths.map((path) => (
-        <button
-          className="gitlab-pierre-file-list-item"
-          key={path}
-          onClick={() => scrollToFile(path)}
-          role="listitem"
-          title={path}
-          type="button"
-        >
-          <span>{path}</span>
-        </button>
-      ))}
+    <div className="gitlab-pierre-file-list-wrapper">
+      <div className="gitlab-pierre-file-list-search gl-mb-2">
+        <GlIcon
+          className="gitlab-pierre-file-list-search-icon"
+          name="search"
+          testid="search-icon"
+        />
+        <input
+          aria-label="Search files"
+          className="gl-form-input form-control"
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          placeholder="Search (e.g. *.vue) (F)"
+          type="search"
+          value={query}
+        />
+      </div>
+      <div className="gitlab-pierre-file-list" role="list">
+        {filteredPaths.length === 0 ? (
+          <p className="gitlab-pierre-file-list-empty gl-text-subtle">No files match.</p>
+        ) : (
+          filteredPaths.map((path) => {
+            const info = fileInfoByPath.get(path);
+            return (
+              <button
+                className="gitlab-pierre-file-list-item"
+                key={path}
+                onClick={() => scrollToFile(path)}
+                role="listitem"
+                title={path}
+                type="button"
+              >
+                <span className={`gitlab-pierre-file-status gitlab-pierre-file-status-${info?.status ?? 'modified'}`}>
+                  {getGitStatusLabel(info?.status ?? 'modified')}
+                </span>
+                <GlIcon
+                  className="gitlab-pierre-file-list-item-icon gl-fill-icon-subtle"
+                  name="doc-text"
+                  testid="doc-text-icon"
+                />
+                <span className="gitlab-pierre-file-list-path">{path}</span>
+                {info != null ? (
+                  <span
+                    aria-label={`Added ${info.stats.additions} lines. Removed ${info.stats.deletions} lines.`}
+                    className="gitlab-pierre-file-list-stats"
+                  >
+                    <span className="gitlab-pierre-file-list-additions">+{info.stats.additions}</span>
+                    <span className="gitlab-pierre-file-list-deletions">-{info.stats.deletions}</span>
+                  </span>
+                ) : null}
+              </button>
+            );
+          })
+        )}
+      </div>
     </div>
   );
+}
+
+function getGitStatusEntries(
+  fileInfoByPath: Map<string, FileBrowserFileInfo>
+): GitStatusEntry[] {
+  return Array.from(fileInfoByPath, ([path, info]) => ({ path, status: info.status }));
+}
+
+function getGitStatusLabel(status: GitStatus): string {
+  if (status === 'added') return 'A';
+  if (status === 'deleted') return 'D';
+  if (status === 'renamed') return 'R';
+  if (status === 'untracked') return 'U';
+  return 'M';
+}
+
+function formatFileStats(stats: FileStats): string {
+  return `+${stats.additions} -${stats.deletions}`;
 }
 
 function scrollToFile(path: string): void {
