@@ -2,6 +2,11 @@
   display: none !important;
 }
 
+html:has([data-gitlab-pierre="shell"]) #diffs:not([data-gitlab-pierre-comment-mode]),
+html:has([data-gitlab-pierre="shell"]) [data-testid="diffs"]:not([data-gitlab-pierre-comment-mode]) {
+  display: none !important;
+}
+
 [data-gitlab-pierre="shell"] {
   display: contents;
   -webkit-font-smoothing: antialiased;

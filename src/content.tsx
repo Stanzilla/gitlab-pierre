@@ -507,7 +507,7 @@ async function run(): Promise<void> {
 function getChangesPage(location: Location): GitLabChangesPage | null {
   const path = location.pathname;
 
-  const mergeRequestMatch = path.match(/^(.*\/-\/merge_requests\/\d+)(?:\/diffs)?\/?$/);
+  const mergeRequestMatch = path.match(/^(.*\/-\/merge_requests\/\d+)\/diffs\/?$/);
   if (mergeRequestMatch?.[1] != null) {
     return {
       diffUrl: `${mergeRequestMatch[1]}.diff`,
