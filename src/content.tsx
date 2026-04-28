@@ -9,7 +9,6 @@ import React, {
 } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
-  parseDiffFromFile,
   processPatch,
   type DiffsThemeNames,
   type FileDiffMetadata,
@@ -654,24 +653,6 @@ function getFileGitStatus(file: FileDiffMetadata): GitStatus {
   return 'modified';
 }
 
-function getProjectId(): number | null {
-  const script = document.querySelector<HTMLScriptElement>('script.js-sidebar-options');
-  if (script == null) return null;
-  try {
-    const data = JSON.parse(script.textContent ?? '');
-    const endpoint = typeof data?.projectsAutocompleteEndpoint === 'string'
-      ? (data.projectsAutocompleteEndpoint as string)
-      : '';
-    const match = endpoint.match(/[?&]project_id=(\d+)/);
-    if (match?.[1] != null) {
-      return Number.parseInt(match[1], 10);
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
 function getNativeChangesChrome(): NativeChangesChrome {
   const commitLink = document.querySelector<HTMLAnchorElement>(
     '.mr-version-menus-container a.monospace.gl-link, .mr-version-menus-container a.monospace'
@@ -760,107 +741,6 @@ function cleanUp(): void {
 }
 
 const IconSpriteContext = createContext<string>('');
-const ProjectIdContext = createContext<number | null>(null);
-
-const ZERO_BLOB_SHA = '0000000000000000000000000000000000000000';
-
-async function fetchBlobContents(
-  projectId: number,
-  blobSha: string
-): Promise<string> {
-  if (blobSha === ZERO_BLOB_SHA) {
-    return '';
-  }
-  const response = await fetch(
-    `/api/v4/projects/${projectId}/repository/blobs/${blobSha}/raw`,
-    { credentials: 'same-origin' }
-  );
-  if (!response.ok) {
-    throw new Error(`GitLab returned ${response.status} for blob ${blobSha}`);
-  }
-  return response.text();
-}
-
-function useFullFileDiff(
-  file: FileDiffMetadata,
-  containerRef: React.RefObject<HTMLElement | null>
-): FileDiffMetadata {
-  const projectId = useContext(ProjectIdContext);
-  const [enriched, setEnriched] = useState<FileDiffMetadata | null>(null);
-  const hasRequestedRef = useRef(false);
-
-  useEffect(() => {
-    setEnriched(null);
-    hasRequestedRef.current = false;
-  }, [file]);
-
-  useEffect(() => {
-    if (
-      projectId == null ||
-      file.prevObjectId == null ||
-      file.newObjectId == null ||
-      enriched != null
-    ) {
-      return;
-    }
-
-    const containerNode = containerRef.current;
-    if (containerNode == null) return;
-
-    let cancelled = false;
-
-    const triggerFetch = (): void => {
-      if (hasRequestedRef.current) return;
-      hasRequestedRef.current = true;
-
-      const oldName = normalizeDiffPath(file.prevName) ?? normalizeDiffPath(file.name) ?? file.name;
-      const newName = normalizeDiffPath(file.name) ?? file.name;
-
-      Promise.all([
-        fetchBlobContents(projectId, file.prevObjectId!),
-        fetchBlobContents(projectId, file.newObjectId!),
-      ])
-        .then(([oldContents, newContents]) => {
-          if (cancelled) return;
-          try {
-            const next = parseDiffFromFile(
-              { name: oldName, contents: oldContents },
-              { name: newName, contents: newContents }
-            );
-            setEnriched(next);
-          } catch (error) {
-            console.warn('[GitLab Pierre] Could not build full-file diff.', error);
-            hasRequestedRef.current = false;
-          }
-        })
-        .catch((error: unknown) => {
-          console.warn('[GitLab Pierre] Could not fetch raw file blobs.', error);
-          hasRequestedRef.current = false;
-        });
-    };
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            triggerFetch();
-            observer.disconnect();
-            return;
-          }
-        }
-      },
-      { rootMargin: '400px 0px' }
-    );
-    observer.observe(containerNode);
-
-    return () => {
-      cancelled = true;
-      observer.disconnect();
-    };
-  }, [projectId, file, enriched, containerRef]);
-
-  return enriched ?? file;
-}
 
 function getIconSpriteUrl(): string {
   const useEl = document.querySelector('use[href*="/assets/icons-"]');
@@ -957,7 +837,6 @@ function PierreChangesView({
   const [isFileBrowserVisible, setIsFileBrowserVisible] = useState(true);
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(() => new Set());
   const spriteUrl = useMemo(() => getIconSpriteUrl(), []);
-  const projectId = useMemo(() => getProjectId(), []);
   const diffThemeOptions = useMemo(() => getDiffThemeOptions(themeSettings), [themeSettings]);
   const unsafeCSS = useMemo(() => getPierreDiffUnsafeCSS(themeSettings), [themeSettings]);
   const isPierreView = viewMode === 'pierre';
@@ -994,7 +873,6 @@ function PierreChangesView({
 
   return (
     <IconSpriteContext.Provider value={spriteUrl}>
-      <ProjectIdContext.Provider value={projectId}>
       <div className="mr-version-controls" data-gitlab-pierre="toolbar">
         <div className="mr-version-menus-container gl-px-5 gl-pb-2 gl-pt-3 gitlab-pierre-toolbar">
           <PierreVersionContext nativeChrome={nativeChrome} />
@@ -1079,7 +957,6 @@ function PierreChangesView({
           })}
         </div>
       </div>
-      </ProjectIdContext.Provider>
     </IconSpriteContext.Provider>
   );
 }
@@ -1214,8 +1091,6 @@ function PierreDiffFile({
   const stats = useMemo(() => getFileStats(file), [file]);
   const fileId = `gitlab-pierre-file-${hashPath(path)}`;
   const contentId = `gitlab-pierre-content-${hashPath(path)}`;
-  const containerRef = useRef<HTMLDivElement>(null);
-  const fileDiff = useFullFileDiff(file, containerRef);
 
   return (
     <div
@@ -1223,7 +1098,6 @@ function PierreDiffFile({
       data-gitlab-pierre-file={path}
       data-path={path}
       id={fileId}
-      ref={containerRef}
     >
       <div
         className="js-file-title file-title file-title-flex-parent gl-rounded-bl-none gl-rounded-br-none !gl-border-0"
@@ -1287,8 +1161,8 @@ function PierreDiffFile({
       >
         <FileDiff
           disableWorkerPool
-          fileDiff={fileDiff}
-          key={`${themeSettingsKey}:${areDiffsCollapsed ? 'c' : 'e'}:${fileDiff.isPartial ? 'p' : 'f'}`}
+          fileDiff={file}
+          key={`${themeSettingsKey}:${areDiffsCollapsed ? 'c' : 'e'}`}
           options={{
             collapsedContextThreshold: 12,
             collapsed: false,
