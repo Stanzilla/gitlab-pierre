@@ -203,6 +203,29 @@ html:has([data-gitlab-pierre="shell"]) [data-testid="diffs"]:not([data-gitlab-pi
   display: block;
 }
 
+.gitlab-pierre-comment-slot {
+  display: block;
+  margin: 0.25rem 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.375rem;
+  background: var(--gl-background-color-default, #fff);
+  color: var(--gl-text-color-default, inherit);
+}
+
+.gitlab-pierre-comment-slot:empty {
+  display: none;
+}
+
+.gitlab-pierre-comment-slot > .js-temp-notes-holder,
+.gitlab-pierre-comment-slot > .js-temp-notes-holder > td,
+.gitlab-pierre-comment-slot > .js-temp-notes-holder > .notes-content {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .gitlab-pierre-line-comment-button {
   width: 1.5rem;
   height: 1.5rem;

@@ -10,9 +10,12 @@ import React, {
 import { createRoot, type Root } from 'react-dom/client';
 import {
   processPatch,
+  type AnnotationSide,
+  type DiffLineAnnotation,
   type DiffsThemeNames,
   type FileDiffMetadata,
   type GetHoveredLineResult,
+  type SelectedLineRange,
   type ThemeTypes,
 } from '@pierre/diffs';
 import { FileDiff } from '@pierre/diffs/react';
@@ -1092,6 +1095,65 @@ function PierreDiffFile({
   const fileId = `gitlab-pierre-file-${hashPath(path)}`;
   const contentId = `gitlab-pierre-content-${hashPath(path)}`;
 
+  const [activeCommentLine, setActiveCommentLine] = useState<ActiveCommentLine | null>(null);
+  const [commentHost, setCommentHost] = useState<HTMLElement | null>(null);
+  const selectedRangeRef = useRef<SelectedLineRange | null>(null);
+
+  const lineAnnotations = useMemo<DiffLineAnnotation[] | undefined>(
+    () =>
+      activeCommentLine == null
+        ? undefined
+        : [{ side: activeCommentLine.side, lineNumber: activeCommentLine.lineNumber }],
+    [activeCommentLine]
+  );
+
+  const renderAnnotation = useCallback(
+    () => <InlineCommentSlot setHost={setCommentHost} />,
+    []
+  );
+
+  const handleLineSelected = useCallback((range: SelectedLineRange | null) => {
+    selectedRangeRef.current = range;
+  }, []);
+
+  const handleAddComment = useCallback(
+    (line: GetHoveredLineResult<'diff'>) => {
+      const range = selectedRangeRef.current;
+      const multiLine = resolveMultiLineRange(range, line);
+
+      if (multiLine == null) {
+        setActiveCommentLine({
+          side: line.side,
+          lineNumber: line.lineNumber,
+          multiLine: null,
+        });
+        return;
+      }
+
+      setActiveCommentLine({
+        side: multiLine.anchorSide,
+        lineNumber: multiLine.anchorLine,
+        multiLine,
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (activeCommentLine == null || commentHost == null) return;
+
+    const hijack = startNativeCommentHijack({
+      file,
+      line: activeCommentLine,
+      host: commentHost,
+      onTeardown: () => setActiveCommentLine(null),
+    });
+
+    return () => {
+      hijack.cancel();
+    };
+  }, [activeCommentLine, commentHost, file]);
+
   return (
     <div
       className="diff-file file-holder has-body"
@@ -1163,21 +1225,25 @@ function PierreDiffFile({
           disableWorkerPool
           fileDiff={file}
           key={`${themeSettingsKey}:${areDiffsCollapsed ? 'c' : 'e'}`}
+          lineAnnotations={lineAnnotations}
           options={{
             collapsedContextThreshold: 12,
             collapsed: false,
             diffStyle: 'unified',
             enableGutterUtility: true,
+            enableLineSelection: true,
             expansionLineCount: 20,
             hunkSeparators: 'line-info',
+            onLineSelected: handleLineSelected,
             onPostRender: ensurePierreDiffCoreStyles,
             overflow: 'wrap',
             theme: themeOptions.theme,
             themeType: themeOptions.themeType,
             unsafeCSS,
           }}
+          renderAnnotation={renderAnnotation}
           renderGutterUtility={(getHoveredLine) => (
-            <LineCommentButton file={file} getHoveredLine={getHoveredLine} />
+            <LineCommentButton getHoveredLine={getHoveredLine} onAddComment={handleAddComment} />
           )}
         />
       </div>
@@ -1508,12 +1574,47 @@ function getPierreExpandButtonLabel(button: HTMLElement): string {
   return 'Expand hidden lines';
 }
 
+interface MultiLineCommentRange {
+  startLine: number;
+  endLine: number;
+  anchorLine: number;
+  anchorSide: AnnotationSide;
+  startSide: AnnotationSide;
+}
+
+interface ActiveCommentLine {
+  side: AnnotationSide;
+  lineNumber: number;
+  multiLine: MultiLineCommentRange | null;
+}
+
+function resolveMultiLineRange(
+  range: SelectedLineRange | null,
+  hovered: GetHoveredLineResult<'diff'>
+): MultiLineCommentRange | null {
+  if (range == null || range.start === range.end) return null;
+
+  const startBeforeEnd = range.start <= range.end;
+  const lowLine = startBeforeEnd ? range.start : range.end;
+  const highLine = startBeforeEnd ? range.end : range.start;
+  const lowSide = ((startBeforeEnd ? range.side : range.endSide) ?? hovered.side) as AnnotationSide;
+  const highSide = ((startBeforeEnd ? range.endSide : range.side) ?? hovered.side) as AnnotationSide;
+
+  return {
+    startLine: lowLine,
+    endLine: highLine,
+    anchorLine: highLine,
+    anchorSide: highSide,
+    startSide: lowSide,
+  };
+}
+
 function LineCommentButton({
-  file,
   getHoveredLine,
+  onAddComment,
 }: {
-  file: FileDiffMetadata;
   getHoveredLine: () => GetHoveredLineResult<'diff'> | undefined;
+  onAddComment: (line: GetHoveredLineResult<'diff'>) => void;
 }): React.JSX.Element {
   return (
     <button
@@ -1529,7 +1630,7 @@ function LineCommentButton({
           return;
         }
 
-        openNativeCommentForLine(file, hoveredLine);
+        onAddComment(hoveredLine);
       }}
       title="Comment on this line"
       type="button"
@@ -1539,26 +1640,410 @@ function LineCommentButton({
   );
 }
 
-function openNativeCommentForLine(
+function InlineCommentSlot({
+  setHost,
+}: {
+  setHost: (el: HTMLElement | null) => void;
+}): React.JSX.Element {
+  return (
+    <div
+      className="gitlab-pierre-comment-slot"
+      data-gitlab-pierre="comment-slot"
+      ref={setHost}
+    />
+  );
+}
+
+const NATIVE_FORM_SELECTOR = [
+  '.js-temp-notes-holder',
+  '.diff-comment-form',
+  '.discussion-form',
+  '.notes-form',
+  '[data-testid="comment-form"]',
+].join(', ');
+
+interface NativeCommentHijackOptions {
+  file: FileDiffMetadata;
+  line: ActiveCommentLine;
+  host: HTMLElement;
+  onTeardown: () => void;
+}
+
+interface NativeCommentHijackHandle {
+  cancel: () => void;
+}
+
+const NATIVE_OFFSCREEN_STYLE = [
+  'position: fixed',
+  'top: 0',
+  'left: 0',
+  'width: 100vw',
+  'height: 100vh',
+  'overflow: auto',
+  'visibility: hidden',
+  'pointer-events: none',
+  'z-index: -1',
+  'opacity: 0',
+  'display: block',
+].map((rule) => `${rule} !important`).join('; ');
+
+function revealNativeForRender(targets: MountTargets): void {
+  const c = targets.diffContainer;
+  c.setAttribute(COMMENT_MODE_ATTR, 'true');
+  c.classList.remove(HIDDEN_CLASS);
+  c.style.cssText = NATIVE_OFFSCREEN_STYLE;
+}
+
+function restoreNativeAfterHijack(targets: MountTargets): void {
+  const c = targets.diffContainer;
+  c.removeAttribute(COMMENT_MODE_ATTR);
+  c.classList.add(HIDDEN_CLASS);
+  c.style.cssText = '';
+}
+
+interface NativeDiffFileEntry {
+  file_path?: string;
+  new_path?: string;
+  old_path?: string;
+  viewer?: { collapsed?: boolean | null; name?: string } | null;
+}
+
+interface DiffsAppLike {
+  $options?: { name?: string };
+  diffFiles: NativeDiffFileEntry[];
+  loadCollapsedDiff: (file: NativeDiffFileEntry) => unknown;
+}
+
+function findDiffsAppInstance(targets: MountTargets): DiffsAppLike | null {
+  const seed = targets.diffContainer.querySelector('.diff-file') ?? targets.diffContainer;
+  let walker: Element | null = seed as Element;
+  while (walker != null) {
+    const inst = (walker as Element & { __vue__?: DiffsAppLike }).__vue__;
+    if (inst != null && inst.$options?.name === 'DiffsApp') return inst;
+    walker = walker.parentElement;
+  }
+  return null;
+}
+
+function findNativeDiffEntry(
+  app: DiffsAppLike,
+  paths: string[]
+): NativeDiffFileEntry | null {
+  for (const entry of app.diffFiles) {
+    const candidates = [entry.file_path, entry.new_path, entry.old_path]
+      .map((p) => normalizeDiffPath(p ?? undefined))
+      .filter((p): p is string => p != null);
+    if (paths.some((p) => candidates.some((c) => c === p || c.endsWith(`/${p}`)))) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+function ensureCollapsedDiffLoaded(
   file: FileDiffMetadata,
-  hoveredLine: GetHoveredLineResult<'diff'>
+  targets: MountTargets
+): Promise<boolean> {
+  const app = findDiffsAppInstance(targets);
+  if (app == null) return Promise.resolve(true);
+
+  const paths = getDiffFilePaths(file);
+  const entry = findNativeDiffEntry(app, paths);
+  if (entry == null) return Promise.resolve(true);
+  if (entry.viewer?.collapsed !== true) return Promise.resolve(true);
+
+  try {
+    app.loadCollapsedDiff(entry);
+  } catch {
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve) => {
+    const finish = (ok: boolean) => {
+      observer.disconnect();
+      if (timeoutId != null) clearTimeout(timeoutId);
+      resolve(ok);
+    };
+    const observer = new MutationObserver(() => {
+      if (entry.viewer?.collapsed === false || findNativeDiffFiles(paths).length > 0) {
+        finish(true);
+      }
+    });
+    observer.observe(targets.diffContainer, { childList: true, subtree: true });
+    const timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => finish(false), 5000);
+    if (entry.viewer?.collapsed === false || findNativeDiffFiles(paths).length > 0) {
+      finish(true);
+    }
+  });
+}
+
+function scrollNativeContainerToLine(
+  targets: MountTargets,
+  file: FileDiffMetadata,
+  side: AnnotationSide,
+  lineNumber: number,
+  attempt: number
+): HTMLElement | null {
+  const [nativeFile] = findNativeDiffFiles(getDiffFilePaths(file));
+  if (nativeFile == null) return null;
+  const container = targets.diffContainer;
+  const containerRect = container.getBoundingClientRect();
+  const fileRect = nativeFile.getBoundingClientRect();
+  const fileTop = fileRect.top - containerRect.top + container.scrollTop;
+  const fileHeight = fileRect.height;
+  const headerHeight = 50;
+  const sideLines = side === 'additions' ? file.additionLines.length : file.deletionLines.length;
+  const totalLines = Math.max(1, sideLines, file.unifiedLineCount, file.splitLineCount);
+  const safeLine = Math.max(1, Math.min(lineNumber, totalLines));
+  const baseOffset =
+    fileTop + headerHeight + ((safeLine - 1) / totalLines) * Math.max(0, fileHeight - headerHeight);
+  const viewport = container.clientHeight || window.innerHeight;
+  const advance = attempt * viewport * 0.7;
+  const target = Math.max(0, baseOffset + advance - viewport / 2);
+  container.scrollTop = target;
+  return nativeFile;
+}
+
+function startNativeCommentHijack(
+  options: NativeCommentHijackOptions
+): NativeCommentHijackHandle {
+  const { file, line, host, onTeardown } = options;
+  const targets = mountState?.targets ?? null;
+
+  let cancelled = false;
+  let nativeRevealed = false;
+  let retryIntervalId: ReturnType<typeof setInterval> | null = null;
+  let buttonTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let spawnObserver: MutationObserver | null = null;
+  let spawnTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let teardownObserver: MutationObserver | null = null;
+  let movedForm: HTMLElement | null = null;
+  let scrollAttempt = 0;
+
+  const restoreNativeIfNeeded = () => {
+    if (!nativeRevealed || targets == null) return;
+    nativeRevealed = false;
+    restoreNativeAfterHijack(targets);
+  };
+
+  const cleanup = () => {
+    cancelled = true;
+    if (retryIntervalId != null) clearInterval(retryIntervalId);
+    spawnObserver?.disconnect();
+    teardownObserver?.disconnect();
+    if (buttonTimeoutId != null) clearTimeout(buttonTimeoutId);
+    if (spawnTimeoutId != null) clearTimeout(spawnTimeoutId);
+    restoreNativeIfNeeded();
+  };
+
+  const fail = (message: string) => {
+    if (cancelled) return;
+    cleanup();
+    showToast(message, 'error');
+    onTeardown();
+    fallbackToNativeForLine(file, line);
+  };
+
+  const hoveredLine: GetHoveredLineResult<'diff'> = {
+    side: line.side,
+    lineNumber: line.lineNumber,
+  };
+
+  const findNewForm = (root: ParentNode): HTMLElement | null => {
+    if (root instanceof HTMLElement && root.matches(NATIVE_FORM_SELECTOR)) {
+      return root;
+    }
+    return root.querySelector<HTMLElement>(NATIVE_FORM_SELECTOR);
+  };
+
+  const moveFormIntoSlot = (form: HTMLElement) => {
+    if (cancelled) return;
+    movedForm = form;
+    host.appendChild(form);
+    spawnObserver?.disconnect();
+    spawnObserver = null;
+    if (spawnTimeoutId != null) {
+      clearTimeout(spawnTimeoutId);
+      spawnTimeoutId = null;
+    }
+
+    if (line.multiLine != null) {
+      applyMultiLineRangeToForm(host, line.multiLine);
+    }
+
+    teardownObserver = new MutationObserver(() => {
+      if (cancelled) return;
+      if (movedForm == null) return;
+      if (movedForm.isConnected && host.contains(movedForm)) return;
+      teardownObserver?.disconnect();
+      teardownObserver = null;
+      movedForm = null;
+      restoreNativeIfNeeded();
+      onTeardown();
+    });
+    teardownObserver.observe(host, { childList: true });
+  };
+
+  const proceedWithButton = (nativeButton: HTMLElement) => {
+    if (cancelled) return;
+    const nativeFile =
+      nativeButton.closest<HTMLElement>('.diff-file') ?? nativeButton.ownerDocument.body;
+
+    const existing = findNewForm(nativeFile);
+    if (existing != null) {
+      moveFormIntoSlot(existing);
+      return;
+    }
+
+    spawnObserver = new MutationObserver((mutations) => {
+      if (cancelled) return;
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (!(node instanceof HTMLElement)) continue;
+          const form = findNewForm(node);
+          if (form != null) {
+            moveFormIntoSlot(form);
+            return;
+          }
+        }
+      }
+    });
+    spawnObserver.observe(nativeFile, { childList: true, subtree: true });
+
+    spawnTimeoutId = setTimeout(() => {
+      if (cancelled || movedForm != null) return;
+      fail('GitLab’s comment editor did not appear in time.');
+    }, 5000);
+
+    nativeButton.click();
+  };
+
+  const tryFindButton = (): HTMLElement | null =>
+    findNativeCommentButton(file, hoveredLine);
+
+  const beginLookup = () => {
+    if (cancelled) return;
+    if (targets != null) {
+      scrollNativeContainerToLine(targets, file, line.side, line.lineNumber, scrollAttempt);
+    }
+
+    const initial = tryFindButton();
+    if (initial != null) {
+      proceedWithButton(initial);
+      return;
+    }
+
+    retryIntervalId = setInterval(() => {
+      if (cancelled) return;
+      const button = tryFindButton();
+      if (button != null) {
+        if (retryIntervalId != null) {
+          clearInterval(retryIntervalId);
+          retryIntervalId = null;
+        }
+        if (buttonTimeoutId != null) {
+          clearTimeout(buttonTimeoutId);
+          buttonTimeoutId = null;
+        }
+        proceedWithButton(button);
+        return;
+      }
+      if (targets != null) {
+        scrollAttempt += 1;
+        scrollNativeContainerToLine(targets, file, line.side, line.lineNumber, scrollAttempt);
+      }
+    }, 200);
+
+    buttonTimeoutId = setTimeout(() => {
+      if (cancelled || movedForm != null) return;
+      fail('Could not find GitLab’s native comment control for this line.');
+    }, 5000);
+  };
+
+  if (targets != null) {
+    revealNativeForRender(targets);
+    nativeRevealed = true;
+    void ensureCollapsedDiffLoaded(file, targets).then((ok) => {
+      if (cancelled) return;
+      if (!ok) {
+        fail('GitLab could not load the collapsed diff for this file.');
+        return;
+      }
+      beginLookup();
+    });
+  } else {
+    beginLookup();
+  }
+
+  return { cancel: cleanup };
+}
+
+function applyMultiLineRangeToForm(host: HTMLElement, range: MultiLineCommentRange): void {
+  if (trySetMultiLineRange(host, range)) return;
+
+  const observer = new MutationObserver(() => {
+    if (trySetMultiLineRange(host, range)) {
+      observer.disconnect();
+      window.clearTimeout(timeoutId);
+    }
+  });
+  observer.observe(host, { childList: true, subtree: true });
+
+  const timeoutId = window.setTimeout(() => {
+    observer.disconnect();
+  }, 3000);
+}
+
+function trySetMultiLineRange(host: HTMLElement, range: MultiLineCommentRange): boolean {
+  const select =
+    host.querySelector<HTMLSelectElement>('#comment-line-start') ??
+    host.querySelector<HTMLSelectElement>('select.gl-form-select');
+  if (select == null || select.options.length === 0) return false;
+
+  const targetIndex = findOptionIndexForLine(select, range.startLine, range.startSide);
+  if (targetIndex == null) return false;
+  if (select.selectedIndex === targetIndex) return true;
+
+  select.selectedIndex = targetIndex;
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  select.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+}
+
+function findOptionIndexForLine(
+  select: HTMLSelectElement,
+  lineNumber: number,
+  side: AnnotationSide
+): number | null {
+  const sidePrefix = side === 'deletions' ? '-' : '+';
+  const sidedText = `${sidePrefix}${lineNumber}`;
+  const plainText = `${lineNumber}`;
+  let plainMatch: number | null = null;
+  for (let i = 0; i < select.options.length; i += 1) {
+    const text = (select.options[i]?.textContent ?? '').trim();
+    if (text === sidedText) return i;
+    if (text === plainText && plainMatch == null) plainMatch = i;
+  }
+  return plainMatch;
+}
+
+function fallbackToNativeForLine(
+  file: FileDiffMetadata,
+  line: ActiveCommentLine
 ): void {
   const targets = mountState?.targets;
-  if (targets == null) {
-    showToast('GitLab comment controls are not available yet.', 'error');
-    return;
-  }
+  if (targets == null) return;
 
-  const nativeCommentButton = findNativeCommentButton(file, hoveredLine);
-  if (nativeCommentButton == null) {
-    showToast('Could not find GitLab’s native comment control for this line.', 'error');
-    return;
-  }
+  const hoveredLine: GetHoveredLineResult<'diff'> = {
+    side: line.side,
+    lineNumber: line.lineNumber,
+  };
+  const nativeButton = findNativeCommentButton(file, hoveredLine);
+  if (nativeButton == null) return;
 
   showNativeGitLabViewForCommenting(targets);
-  nativeCommentButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  nativeCommentButton.click();
-  showToast('Opened GitLab’s native comment editor for this line.', 'success');
+  nativeButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  nativeButton.click();
 }
 
 function findNativeCommentButton(
@@ -1590,9 +2075,8 @@ function getDiffFilePaths(file: FileDiffMetadata): string[] {
 }
 
 function findNativeDiffFiles(paths: string[]): HTMLElement[] {
-  const diffFiles = Array.from(
-    document.querySelectorAll<HTMLElement>(`.${HIDDEN_CLASS} .diff-file, .gitlab-pierre-native-hidden .diff-file`)
-  );
+  const container: ParentNode = mountState?.targets.diffContainer ?? document;
+  const diffFiles = Array.from(container.querySelectorAll<HTMLElement>('.diff-file'));
   return diffFiles.filter((diffFile) => nativeDiffFileMatchesPath(diffFile, paths));
 }
 
