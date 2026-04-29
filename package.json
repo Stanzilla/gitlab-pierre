@@ -1,11 +1,11 @@
 {
   "name": "gitlab-pierre",
-  "version": "0.4.30",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
-    "build": "pnpm typecheck && vite build --config vite.config.ts && vite build --config vite.loader.config.ts",
+    "build": "pnpm typecheck && vite build --config vite.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "dev": "vite build --config vite.config.ts --watch"
   },

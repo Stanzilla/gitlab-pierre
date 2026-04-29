@@ -7,19 +7,24 @@ const pkg = JSON.parse(
   readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8')
 ) as { version: string };
 
-function syncManifestVersion(): Plugin {
+function syncExtensionVersion(): Plugin {
   return {
-    name: 'pierre-sync-manifest-version',
+    name: 'pierre-sync-extension-version',
     writeBundle(options) {
       const outDir = options.dir ?? 'dist';
       const manifestPath = path.join(outDir, 'manifest.json');
-      try {
-        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-        if (manifest.version === pkg.version) return;
+      const contentScriptPath = path.join(outDir, 'content.js');
+
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      if (manifest.version !== pkg.version) {
         manifest.version = pkg.version;
         writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-      } catch {
-        // No manifest in this build (loader build skips public dir).
+      }
+
+      const contentScript = readFileSync(contentScriptPath, 'utf8');
+      const versionedContentScript = contentScript.replaceAll('__APP_VERSION__', pkg.version);
+      if (versionedContentScript !== contentScript) {
+        writeFileSync(contentScriptPath, versionedContentScript);
       }
     },
   };
@@ -45,10 +50,7 @@ var customElements = globalThis.customElements ?? {
 `;
 
 export default defineConfig({
-  define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
-  },
-  plugins: [syncManifestVersion()],
+  plugins: [syncExtensionVersion()],
   resolve: {
     alias: {
       '@pierre-diffs-core-style': new URL(
