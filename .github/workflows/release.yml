@@ -64,11 +64,17 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         run: pnpm build
 
-      - name: Pack .crx and .zip
+      - name: Pack .zip
         if: steps.check.outputs.exists == 'false'
         uses: cardinalby/webext-buildtools-pack-extension-dir-action@1.0.9
         with:
           extensionDir: dist
+          zipFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.zip
+
+      - name: Pack .crx
+        if: steps.check.outputs.exists == 'false'
+        uses: cardinalby/webext-buildtools-chrome-crx-action@2.0.3
+        with:
           zipFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.zip
           crxFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.crx
           privateKey: ${{ secrets.EXTENSION_PRIVATE_KEY }}
