@@ -38,6 +38,14 @@
   width: 100% !important;
   max-width: 100% !important;
   padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.gitlab-pierre-comment-slot {
+  padding: 8px 12px;
 }
 
 [data-gitlab-pierre="shell"] {
