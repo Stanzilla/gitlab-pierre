@@ -12,13 +12,13 @@
   "dependencies": {
     "@pierre/diffs": "1.1.19",
     "@pierre/trees": "1.0.0-beta.3",
-    "react": "19.2.3",
+    "react": "19.2.5",
     "react-dom": "19.2.3"
   },
   "devDependencies": {
     "@types/chrome": "0.1.33",
     "@types/node": "^25.6.0",
-    "@types/react": "19.2.7",
+    "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "typescript": "6.0.3",
     "vite": "8.0.10"
