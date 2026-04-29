@@ -1,0 +1,85 @@
+# Releases on every package.json version bump pushed to master.
+#
+# One-time setup:
+#   1. Generate a private key:  openssl genrsa -out gitlab-pierre.pem 2048
+#   2. Add it as the EXTENSION_PRIVATE_KEY secret in repo settings
+#      (Settings → Secrets and variables → Actions → New repository secret).
+#      Paste the full PEM contents, including BEGIN/END lines.
+#   3. Keep the .pem file out of git. Losing it means the extension's ID
+#      changes and existing installs stop auto-updating.
+
+name: Release
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag exists
+        id: check
+        run: |
+          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.version.outputs.tag }} already exists, skipping release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.check.outputs.exists == 'false'
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.exists == 'false'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.check.outputs.exists == 'false'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        if: steps.check.outputs.exists == 'false'
+        run: pnpm build
+
+      - name: Pack .crx and .zip
+        if: steps.check.outputs.exists == 'false'
+        uses: cardinalby/webext-buildtools-pack-extension-dir-action@v1
+        with:
+          extensionDir: dist
+          zipFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.zip
+          crxFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.crx
+          privateKey: ${{ secrets.EXTENSION_PRIVATE_KEY }}
+
+      - name: Create release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            gitlab-pierre-${{ steps.version.outputs.version }}.crx
+            gitlab-pierre-${{ steps.version.outputs.version }}.zip

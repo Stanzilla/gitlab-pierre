@@ -4,3 +4,4 @@ node_modules/
 .local/
 copilot-session-*.md
 *.tsbuildinfo
+*.pem
