@@ -5,8 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
-    "build": "tsc --noEmit && vite build --config vite.config.ts && vite build --config vite.loader.config.ts",
-    "typecheck": "tsc --noEmit",
+    "build": "pnpm typecheck && vite build --config vite.config.ts && vite build --config vite.loader.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "dev": "vite build --config vite.config.ts --watch"
   },
   "dependencies": {
@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@types/chrome": "0.1.33",
+    "@types/node": "^25.6.0",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "typescript": "6.0.3",

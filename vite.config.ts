@@ -1,4 +1,29 @@
-import { defineConfig } from 'vite';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { defineConfig, type Plugin } from 'vite';
+
+const pkg = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8')
+) as { version: string };
+
+function syncManifestVersion(): Plugin {
+  return {
+    name: 'pierre-sync-manifest-version',
+    writeBundle(options) {
+      const outDir = options.dir ?? 'dist';
+      const manifestPath = path.join(outDir, 'manifest.json');
+      try {
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        if (manifest.version === pkg.version) return;
+        manifest.version = pkg.version;
+        writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      } catch {
+        // No manifest in this build (loader build skips public dir).
+      }
+    },
+  };
+}
 
 const customElementsShim = `
 var process = globalThis.process ?? { env: { NODE_ENV: "production" } };
@@ -20,6 +45,10 @@ var customElements = globalThis.customElements ?? {
 `;
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
+  plugins: [syncManifestVersion()],
   resolve: {
     alias: {
       '@pierre-diffs-core-style': new URL(

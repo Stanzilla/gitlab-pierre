@@ -16,5 +16,5 @@
     "target": "ES2023",
     "types": ["chrome"]
   },
-  "include": ["src", "vite.config.ts", "vite.loader.config.ts"]
+  "include": ["src"]
 }
