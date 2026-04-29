@@ -1,10 +1,43 @@
+/*
+ * Keep GitLab's diff app in the layout pipeline (visible to Vue refs,
+ * IntersectionObserver, etc.) but invisible and inert to the user. Using
+ * display: none breaks line-level virtualization (IntersectionObserver
+ * never fires for hidden ancestors), so we hide via offscreen positioning
+ * + visibility instead.
+ *
+ * Toggling to native GitLab view removes this class via JS, so the rule is
+ * gated on the class only — no :has() fallback, since the fallback would
+ * also fire when the user explicitly switched to native view.
+ */
 .gitlab-pierre-native-hidden {
-  display: none !important;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+  z-index: -1 !important;
+  overflow: auto !important;
 }
 
-html:has([data-gitlab-pierre="shell"]) #diffs:not([data-gitlab-pierre-comment-mode]),
-html:has([data-gitlab-pierre="shell"]) [data-testid="diffs"]:not([data-gitlab-pierre-comment-mode]) {
-  display: none !important;
+/*
+ * The native MR comment form's outer wrapper carries .diff-tr and
+ * .diff-grid-comments which expect a CSS-grid parent (a diff table row).
+ * When we reparent it into Pierre's annotation slot the grid context is
+ * gone, so flatten the layout.
+ */
+.gitlab-pierre-comment-slot > .js-temp-notes-holder,
+.gitlab-pierre-comment-slot .diff-tr,
+.gitlab-pierre-comment-slot .diff-grid-comments,
+.gitlab-pierre-comment-slot .notes_holder {
+  display: block !important;
+  grid-template-columns: none !important;
+  grid-column: auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 0 !important;
 }
 
 [data-gitlab-pierre="shell"] {
