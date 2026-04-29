@@ -711,6 +711,9 @@ function revealNativeGitLabView(targets: MountTargets): void {
   restoreNativeCompareBar();
   targets.diffContainer.classList.remove(HIDDEN_CLASS);
   targets.diffContainer.removeAttribute('aria-hidden');
+  // Comment hijack may have left inline !important offscreen styles in place
+  // (see revealNativeForRender). Wipe them so the native view becomes visible.
+  targets.diffContainer.style.cssText = '';
 }
 
 function showNativeGitLabViewForCommenting(targets: MountTargets): void {

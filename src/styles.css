@@ -26,7 +26,8 @@
  * The native MR comment form's outer wrapper carries .diff-tr and
  * .diff-grid-comments which expect a CSS-grid parent (a diff table row).
  * When we reparent it into Pierre's annotation slot the grid context is
- * gone, so flatten the layout.
+ * gone, so neutralize the grid rules but leave GitLab's own padding,
+ * borders, and backgrounds intact so the form keeps its native look.
  */
 .gitlab-pierre-comment-slot > .js-temp-notes-holder,
 .gitlab-pierre-comment-slot .diff-tr,
@@ -37,15 +38,23 @@
   grid-column: auto !important;
   width: 100% !important;
   max-width: 100% !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
 }
 
-.gitlab-pierre-comment-slot {
-  padding: 8px 12px;
+/*
+ * Native form paints its editor card on a slightly elevated GitLab
+ * surface. Inside Pierre's diff (which already has its own dark
+ * surface) that reads as a stacked panel, so blank out the editor
+ * card backgrounds and let Pierre's surface show through.
+ */
+.gitlab-pierre-comment-slot .md-area,
+.gitlab-pierre-comment-slot .gl-md-editor,
+.gitlab-pierre-comment-slot .gl-md-editor-container,
+.gitlab-pierre-comment-slot .common-note-form,
+.gitlab-pierre-comment-slot .discussion-form,
+.gitlab-pierre-comment-slot .note-form-actions,
+.gitlab-pierre-comment-slot .md-header,
+.gitlab-pierre-comment-slot .md-write-holder {
+  background: transparent !important;
 }
 
 [data-gitlab-pierre="shell"] {
@@ -246,11 +255,6 @@
 
 .gitlab-pierre-comment-slot {
   display: block;
-  margin: 0.25rem 0;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--gl-border-color-default, #dcdcde);
-  border-radius: 0.375rem;
-  background: var(--gl-background-color-default, #fff);
   color: var(--gl-text-color-default, inherit);
 }
 
@@ -258,7 +262,6 @@
   display: none;
 }
 
-.gitlab-pierre-comment-slot > .js-temp-notes-holder,
 .gitlab-pierre-comment-slot > .js-temp-notes-holder > td,
 .gitlab-pierre-comment-slot > .js-temp-notes-holder > .notes-content {
   display: block;
