@@ -136,28 +136,20 @@
   max-height: calc(100vh - 12rem);
 }
 
-.gitlab-pierre-file-list-search {
+.gitlab-pierre-file-search {
   position: relative;
   flex: 0 0 auto;
+  margin-bottom: 0.75rem;
 }
 
-.gitlab-pierre-file-list-search input {
+.gitlab-pierre-file-search input {
   width: 100%;
   height: 2rem;
-  padding-left: 2.375rem;
+  padding-inline: 0.75rem;
   border-color: var(--gl-border-color-strong, #89888d);
   border-radius: 0.5rem;
   font-size: 0.875rem;
   font-weight: 600;
-}
-
-.gitlab-pierre-file-list-search-icon {
-  position: absolute;
-  top: 50%;
-  left: 0.875rem;
-  transform: translateY(-50%);
-  pointer-events: none;
-  color: var(--gl-text-color-subtle, #626168);
 }
 
 .gitlab-pierre-file-list {

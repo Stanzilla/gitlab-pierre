@@ -282,15 +282,7 @@ const PIERRE_TREE_UNSAFE_CSS = `
   --trees-font-size-override: 13px;
   --trees-font-weight-regular-override: 400;
   --trees-font-weight-semibold-override: 600;
-  --trees-item-height: 28px;
-  --trees-item-padding-x-override: 6px;
-  --trees-item-margin-x-override: 0;
-  --trees-item-row-gap-override: 6px;
-  --trees-level-gap-override: 6px;
-  --trees-icon-width-override: 18px;
   --trees-border-radius-override: 0;
-  --trees-padding-inline-override: 0;
-  --trees-git-lane-width-override: 22px;
   --trees-search-bg-override: var(--gl-background-color-default, #fff);
   --trees-search-fg-override: var(--gl-text-color-default, #1f1e24);
   --trees-selected-bg-override: var(--gl-background-color-strong, #ececef);
@@ -300,50 +292,6 @@ const PIERRE_TREE_UNSAFE_CSS = `
   --trees-git-modified-color-override: var(--gl-text-color-info, #1f75cb);
   --trees-git-renamed-color-override: var(--gl-text-color-warning, #ab6100);
   --trees-git-untracked-color-override: var(--gl-text-color-success, #108548);
-}
-
-[data-file-tree-search-container] {
-  position: relative;
-  margin-block: 0 12px !important;
-}
-
-[data-file-tree-search-container]::before,
-[data-file-tree-search-container]::after {
-  position: absolute;
-  pointer-events: none;
-  content: "";
-}
-
-[data-file-tree-search-container]::before {
-  left: 15px;
-  top: 50%;
-  width: 13px;
-  height: 13px;
-  border: 2px solid var(--gl-text-color-subtle, #626168);
-  border-radius: 50%;
-  transform: translateY(-58%);
-}
-
-[data-file-tree-search-container]::after {
-  left: 27px;
-  top: calc(50% + 6px);
-  width: 8px;
-  height: 2px;
-  border-radius: 999px;
-  background: var(--gl-text-color-subtle, #626168);
-  transform: rotate(45deg);
-  transform-origin: left center;
-}
-
-[data-file-tree-search-input] {
-  height: 32px !important;
-  margin-block: 0 !important;
-  padding-inline: 38px 12px !important;
-  border-color: var(--gl-border-color-strong, #89888d) !important;
-  border-radius: 8px !important;
-  font-size: 14px !important;
-  font-weight: 600 !important;
-  line-height: 30px !important;
 }
 
 [role='tree'] {
@@ -1014,6 +962,25 @@ function PierreFileBrowser({
   paths: string[];
   view: FileBrowserView;
 }): React.JSX.Element {
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'f' || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isEditableEventTarget(event.target)) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleFileSelected = useCallback(() => {
+    setSearchQuery('');
+  }, []);
+
   return (
     <div
       className="rd-app-sidebar diff-tree-list gl-px-3 gitlab-pierre-file-browser"
@@ -1064,15 +1031,55 @@ function PierreFileBrowser({
               </button>
             </div>
           </div>
+          <FileBrowserSearch
+            inputRef={searchInputRef}
+            onChange={setSearchQuery}
+            query={searchQuery}
+          />
           <nav aria-label="File tree" className="mr-tree-list">
             {view === 'tree' ? (
-              <PierreFileTree fileInfoByPath={fileInfoByPath} paths={paths} />
+              <PierreFileTree
+                fileInfoByPath={fileInfoByPath}
+                onFileSelected={handleFileSelected}
+                onQueryChange={setSearchQuery}
+                paths={paths}
+                query={searchQuery}
+              />
             ) : (
-              <PierreFileList fileInfoByPath={fileInfoByPath} paths={paths} />
+              <PierreFileList
+                fileInfoByPath={fileInfoByPath}
+                onFileSelected={handleFileSelected}
+                paths={paths}
+                query={searchQuery}
+              />
             )}
           </nav>
         </section>
       </div>
+    </div>
+  );
+}
+
+function FileBrowserSearch({
+  inputRef,
+  onChange,
+  query,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onChange: (query: string) => void;
+  query: string;
+}): React.JSX.Element {
+  return (
+    <div className="gitlab-pierre-file-search">
+      <input
+        aria-label="Search files"
+        className="gl-form-input form-control"
+        onChange={(event) => onChange(event.currentTarget.value)}
+        placeholder="Search (e.g. *.vue) (F)"
+        ref={inputRef}
+        type="search"
+        value={query}
+      />
     </div>
   );
 }
@@ -2426,21 +2433,29 @@ function showToast(message: string, kind: 'error' | 'success' | 'warning'): void
 
 function PierreFileTree({
   fileInfoByPath,
+  onFileSelected,
+  onQueryChange,
   paths,
+  query,
 }: {
   fileInfoByPath: Map<string, FileBrowserFileInfo>;
+  onFileSelected: () => void;
+  onQueryChange: (query: string) => void;
   paths: string[];
+  query: string;
 }): React.JSX.Element {
   const model = useMemo(
     () =>
       new FileTreeModel({
         flattenEmptyDirectories: true,
+        density: 'default',
         gitStatus: getGitStatusEntries(fileInfoByPath),
         initialExpansion: 'open',
-        itemHeight: 28,
+        onSearchChange: (value) => onQueryChange(value ?? ''),
         onSelectionChange: ([selectedPath]) => {
           if (selectedPath == null) return;
           scrollToFile(selectedPath);
+          onFileSelected();
         },
         paths,
         renderRowDecoration: ({ item }: FileTreeRowDecorationContext) => {
@@ -2452,11 +2467,9 @@ function PierreFileTree({
             title: `Added ${info.stats.additions} lines. Removed ${info.stats.deletions} lines.`,
           };
         },
-        search: true,
-        searchBlurBehavior: 'retain',
         unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
       }),
-    [fileInfoByPath, paths]
+    [fileInfoByPath, onFileSelected, onQueryChange, paths]
   );
 
   useEffect(() => {
@@ -2466,28 +2479,23 @@ function PierreFileTree({
   }, [model]);
 
   useEffect(() => {
-    const frameId = window.requestAnimationFrame(() => {
-      const input = model
-        .getFileTreeContainer()
-        ?.shadowRoot?.querySelector<HTMLInputElement>('[data-file-tree-search-input]');
-      if (input != null) {
-        input.placeholder = 'Search (e.g. *.vue) (F)';
-      }
-    });
-    return () => window.cancelAnimationFrame(frameId);
-  }, [model]);
+    model.setSearch(query.trim() === '' ? null : query);
+  }, [model, query]);
 
   return <FileTree className="gitlab-pierre-tree" model={model} />;
 }
 
 function PierreFileList({
   fileInfoByPath,
+  onFileSelected,
   paths,
+  query,
 }: {
   fileInfoByPath: Map<string, FileBrowserFileInfo>;
+  onFileSelected: () => void;
   paths: string[];
+  query: string;
 }): React.JSX.Element {
-  const [query, setQuery] = useState('');
   const trimmedQuery = query.trim().toLowerCase();
   const filteredPaths = useMemo(
     () =>
@@ -2499,21 +2507,6 @@ function PierreFileList({
 
   return (
     <div className="gitlab-pierre-file-list-wrapper">
-      <div className="gitlab-pierre-file-list-search gl-mb-2">
-        <GlIcon
-          className="gitlab-pierre-file-list-search-icon"
-          name="search"
-          testid="search-icon"
-        />
-        <input
-          aria-label="Search files"
-          className="gl-form-input form-control"
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Search (e.g. *.vue) (F)"
-          type="search"
-          value={query}
-        />
-      </div>
       <div className="gitlab-pierre-file-list" role="list">
         {filteredPaths.length === 0 ? (
           <p className="gitlab-pierre-file-list-empty gl-text-subtle">No files match.</p>
@@ -2524,7 +2517,10 @@ function PierreFileList({
               <button
                 className="gitlab-pierre-file-list-item"
                 key={path}
-                onClick={() => scrollToFile(path)}
+                onClick={() => {
+                  scrollToFile(path);
+                  onFileSelected();
+                }}
                 role="listitem"
                 title={path}
                 type="button"
@@ -2581,6 +2577,12 @@ function scrollToFile(path: string): void {
   if (target instanceof HTMLElement) {
     target.scrollIntoView({ block: 'start' });
   }
+}
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return target.matches('input, textarea, select');
 }
 
 function LoadingState(): React.JSX.Element {
