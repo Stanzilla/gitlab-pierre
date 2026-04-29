@@ -10,16 +10,16 @@ importers:
     dependencies:
       '@pierre/diffs':
         specifier: 1.1.19
-        version: 1.1.19(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 1.1.19(react-dom@19.2.3(react@19.2.5))(react@19.2.5)
       '@pierre/trees':
         specifier: 1.0.0-beta.3
-        version: 1.0.0-beta.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 1.0.0-beta.3(react-dom@19.2.3(react@19.2.5))(react@19.2.5)
       react:
-        specifier: 19.2.3
-        version: 19.2.3
+        specifier: 19.2.5
+        version: 19.2.5
       react-dom:
         specifier: 19.2.3
-        version: 19.2.3(react@19.2.3)
+        version: 19.2.3(react@19.2.5)
     devDependencies:
       '@types/chrome':
         specifier: 0.1.33
@@ -28,11 +28,11 @@ importers:
         specifier: ^25.6.0
         version: 25.6.0
       '@types/react':
-        specifier: 19.2.7
-        version: 19.2.7
+        specifier: 19.2.14
+        version: 19.2.14
       '@types/react-dom':
         specifier: 19.2.3
-        version: 19.2.3(@types/react@19.2.7)
+        version: 19.2.3(@types/react@19.2.14)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -227,8 +227,8 @@ packages:
     peerDependencies:
       '@types/react': ^19.2.0
 
-  '@types/react@19.2.7':
-    resolution: {integrity: sha512-MWtvHrGZLFttgeEj28VXHxpmwYbor/ATPYbBfSFZEIRK0ecCFLl2Qo55z52Hss+UV9CRN7trSeq1zbgx7YDWWg==}
+  '@types/react@19.2.14':
+    resolution: {integrity: sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==}
 
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
@@ -422,8 +422,8 @@ packages:
     peerDependencies:
       react: ^19.2.3
 
-  react@19.2.3:
-    resolution: {integrity: sha512-Ku/hhYbVjOQnXDZFv2+RibmLFGwFdeeKHFcOTlrt7xplBnya5OGn/hIRDsqDiSUcfORsDC7MPxwork8jBwsIWA==}
+  react@19.2.5:
+    resolution: {integrity: sha512-llUJLzz1zTUBrskt2pwZgLq59AemifIftw4aB7JxOqf1HY2FDaGDxgwpAPVzHU1kdWabH7FauP4i1oEeer2WCA==}
     engines: {node: '>=0.10.0'}
 
   regex-recursion@6.0.2:
@@ -568,25 +568,25 @@ snapshots:
 
   '@oxc-project/types@0.127.0': {}
 
-  '@pierre/diffs@1.1.19(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@pierre/diffs@1.1.19(react-dom@19.2.3(react@19.2.5))(react@19.2.5)':
     dependencies:
       '@pierre/theme': 0.0.28
       '@shikijs/transformers': 3.23.0
       diff: 8.0.3
       hast-util-to-html: 9.0.5
       lru_map: 0.4.1
-      react: 19.2.3
-      react-dom: 19.2.3(react@19.2.3)
+      react: 19.2.5
+      react-dom: 19.2.3(react@19.2.5)
       shiki: 3.23.0
 
   '@pierre/theme@0.0.28': {}
 
-  '@pierre/trees@1.0.0-beta.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@pierre/trees@1.0.0-beta.3(react-dom@19.2.3(react@19.2.5))(react@19.2.5)':
     dependencies:
       preact: 11.0.0-beta.0
       preact-render-to-string: 6.6.5(preact@11.0.0-beta.0)
-      react: 19.2.3
-      react-dom: 19.2.3(react@19.2.3)
+      react: 19.2.5
+      react-dom: 19.2.3(react@19.2.5)
 
   '@rolldown/binding-android-arm64@1.0.0-rc.17':
     optional: true
@@ -707,11 +707,11 @@ snapshots:
     dependencies:
       undici-types: 7.19.2
 
-  '@types/react-dom@19.2.3(@types/react@19.2.7)':
+  '@types/react-dom@19.2.3(@types/react@19.2.14)':
     dependencies:
-      '@types/react': 19.2.7
+      '@types/react': 19.2.14
 
-  '@types/react@19.2.7':
+  '@types/react@19.2.14':
     dependencies:
       csstype: 3.2.3
 
@@ -874,12 +874,12 @@ snapshots:
 
   property-information@7.1.0: {}
 
-  react-dom@19.2.3(react@19.2.3):
+  react-dom@19.2.3(react@19.2.5):
     dependencies:
-      react: 19.2.3
+      react: 19.2.5
       scheduler: 0.27.0
 
-  react@19.2.3: {}
+  react@19.2.5: {}
 
   regex-recursion@6.0.2:
     dependencies:
