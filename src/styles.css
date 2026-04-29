@@ -1,9 +1,9 @@
 /*
  * Keep GitLab's diff app in the layout pipeline (visible to Vue refs,
  * IntersectionObserver, etc.) but invisible and inert to the user. Using
- * display: none breaks line-level virtualization (IntersectionObserver
- * never fires for hidden ancestors), so we hide via offscreen positioning
- * + visibility instead.
+ * display: none and visibility: hidden break line-level virtualization in
+ * GitLab's native diff app, so hide with opacity/offscreen positioning while
+ * keeping the container renderable and measurable.
  *
  * Toggling to native GitLab view removes this class via JS, so the rule is
  * gated on the class only — no :has() fallback, since the fallback would
@@ -15,7 +15,6 @@
   width: 100vw !important;
   height: 100vh !important;
   margin: 0 !important;
-  visibility: hidden !important;
   pointer-events: none !important;
   opacity: 0 !important;
   z-index: -1 !important;

@@ -1719,12 +1719,18 @@ const NATIVE_OFFSCREEN_STYLE = [
   'width: 100vw',
   'height: 100vh',
   'overflow: auto',
-  'visibility: hidden',
   'pointer-events: none',
   'z-index: -1',
   'opacity: 0',
   'display: block',
 ].map((rule) => `${rule} !important`).join('; ');
+
+const PAGE_BRIDGE_SCRIPT = 'gitlab-pierre-page-bridge.js';
+const PAGE_BRIDGE_REQUEST_EVENT = 'gitlab-pierre:native-file-request';
+const PAGE_BRIDGE_RESPONSE_EVENT = 'gitlab-pierre:native-file-response';
+const PAGE_BRIDGE_INJECTED_ATTR = 'data-gitlab-pierre-page-bridge-injected';
+
+let pageBridgeInjection: Promise<boolean> | null = null;
 
 function revealNativeForRender(targets: MountTargets): void {
   const c = targets.diffContainer;
@@ -1858,6 +1864,118 @@ function waitForCondition(
   });
 }
 
+function ensurePageBridgeInjected(): Promise<boolean> {
+  if (document.documentElement.hasAttribute(PAGE_BRIDGE_INJECTED_ATTR)) {
+    return Promise.resolve(true);
+  }
+
+  if (pageBridgeInjection != null) {
+    return pageBridgeInjection;
+  }
+
+  pageBridgeInjection = new Promise((resolve) => {
+    if (typeof chrome === 'undefined' || chrome.runtime?.getURL == null) {
+      console.warn('[GitLab Pierre] Page bridge unavailable: chrome.runtime.getURL missing.');
+      resolve(false);
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL(PAGE_BRIDGE_SCRIPT);
+    script.async = false;
+
+    script.addEventListener(
+      'load',
+      () => {
+        document.documentElement.setAttribute(PAGE_BRIDGE_INJECTED_ATTR, 'true');
+        script.remove();
+        resolve(true);
+      },
+      { once: true }
+    );
+    script.addEventListener(
+      'error',
+      () => {
+        console.warn('[GitLab Pierre] Failed to inject page bridge.');
+        script.remove();
+        pageBridgeInjection = null;
+        resolve(false);
+      },
+      { once: true }
+    );
+
+    (document.head ?? document.documentElement).append(script);
+  });
+
+  return pageBridgeInjection;
+}
+
+function parsePageBridgeResponse(detail: unknown): Record<string, unknown> | null {
+  if (typeof detail !== 'string') return null;
+  try {
+    const parsed: unknown = JSON.parse(detail);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function requestNativeFileMountInPageWorld(
+  paths: string[],
+  targets: MountTargets
+): Promise<boolean> {
+  const bridgeReady = await ensurePageBridgeInjected();
+  if (!bridgeReady) return false;
+
+  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const response = await new Promise<Record<string, unknown> | null>((resolve) => {
+    const timeoutId = window.setTimeout(() => {
+      document.removeEventListener(PAGE_BRIDGE_RESPONSE_EVENT, onResponse);
+      resolve(null);
+    }, 5000);
+
+    const finish = (payload: Record<string, unknown> | null) => {
+      window.clearTimeout(timeoutId);
+      document.removeEventListener(PAGE_BRIDGE_RESPONSE_EVENT, onResponse);
+      resolve(payload);
+    };
+
+    function onResponse(event: Event): void {
+      const payload = parsePageBridgeResponse((event as CustomEvent).detail);
+      if (payload?.requestId !== requestId) return;
+      finish(payload);
+    }
+
+    document.addEventListener(PAGE_BRIDGE_RESPONSE_EVENT, onResponse);
+    targets.diffContainer.dispatchEvent(
+      new CustomEvent(PAGE_BRIDGE_REQUEST_EVENT, {
+        bubbles: true,
+        detail: JSON.stringify({ paths, requestId }),
+      })
+    );
+  });
+
+  console.info('[GitLab Pierre] page bridge mount response', { paths, response });
+  return response?.ok === true;
+}
+
+async function waitForNativeDiffFile(paths: string[], targets: MountTargets): Promise<boolean> {
+  return waitForCondition(
+    () => findNativeDiffFiles(paths).length > 0,
+    targets.diffContainer,
+    5000
+  );
+}
+
+async function mountNativeFileViaPageBridge(
+  paths: string[],
+  targets: MountTargets
+): Promise<boolean> {
+  const requested = await requestNativeFileMountInPageWorld(paths, targets);
+  if (!requested) return false;
+  return waitForNativeDiffFile(paths, targets);
+}
+
 async function ensureNativeFileMounted(
   file: FileDiffMetadata,
   targets: MountTargets
@@ -1885,7 +2003,7 @@ async function ensureNativeFileMounted(
       probe = probe.parentElement;
     }
     log('no-DiffsApp', { ok, ancestorVueNames });
-    return ok;
+    return ok || mountNativeFileViaPageBridge(paths, targets);
   }
 
   const entry = findNativeDiffEntry(app, paths);
@@ -1896,7 +2014,7 @@ async function ensureNativeFileMounted(
       diffFilesCount: app.diffFiles.length,
       sampleEntries: app.diffFiles.slice(0, 3).map((e) => e.file_path),
     });
-    return ok;
+    return ok || mountNativeFileViaPageBridge(paths, targets);
   }
 
   log('entry-found', {
@@ -1936,12 +2054,12 @@ async function ensureNativeFileMounted(
     log('already-in-dom');
   }
 
-  const mounted = await waitForCondition(
-    () => findNativeDiffFiles(paths).length > 0,
-    targets.diffContainer,
-    5000
-  );
+  let mounted = await waitForNativeDiffFile(paths, targets);
   log('after-mount-wait', { mounted });
+  if (!mounted) {
+    mounted = await mountNativeFileViaPageBridge(paths, targets);
+    log('after-page-bridge-mount-wait', { mounted });
+  }
   return mounted;
 }
 
@@ -2275,12 +2393,15 @@ function findNativeCommentButton(
   file: FileDiffMetadata,
   hoveredLine: GetHoveredLineResult<'diff'>
 ): HTMLElement | null {
-  const side = hoveredLine.side === 'additions' ? 'right' : 'left';
   const filePaths = getDiffFilePaths(file);
   const nativeFiles = findNativeDiffFiles(filePaths);
 
   for (const nativeFile of nativeFiles) {
-    const button = findNativeCommentButtonInFile(nativeFile, hoveredLine.lineNumber, side);
+    const button = findNativeCommentButtonInFile(
+      nativeFile,
+      hoveredLine.lineNumber,
+      hoveredLine.side
+    );
     if (button != null) {
       return button;
     }
@@ -2334,11 +2455,23 @@ function nativeDiffFileMatchesPath(diffFile: HTMLElement, paths: string[]): bool
 function findNativeCommentButtonInFile(
   nativeFile: HTMLElement,
   lineNumber: number,
-  side: 'left' | 'right'
+  side: AnnotationSide
 ): HTMLElement | null {
   const escapedLineNumber = CSS.escape(String(lineNumber));
-  const sideSelectors =
-    side === 'right'
+  const interopSelectors =
+    side === 'additions'
+      ? [
+          `[data-interop-type="new"][data-interop-new-line="${escapedLineNumber}"] a[data-linenumber="${escapedLineNumber}"]`,
+          `[data-interop-type="new"][data-interop-line="${escapedLineNumber}"] a[data-linenumber="${escapedLineNumber}"]`,
+        ]
+      : [
+          `[data-interop-type="old"][data-interop-old-line="${escapedLineNumber}"] a[data-linenumber="${escapedLineNumber}"]`,
+          `[data-interop-type="old"][data-interop-line="${escapedLineNumber}"] a[data-linenumber="${escapedLineNumber}"]`,
+        ];
+  const preferredVisualSide = side === 'additions' ? 'right' : 'left';
+  const fallbackVisualSide = preferredVisualSide === 'right' ? 'left' : 'right';
+  const visualSideSelectors = (visualSide: 'left' | 'right') =>
+    visualSide === 'right'
       ? [
           `[data-testid="right-side"] a[data-linenumber="${escapedLineNumber}"]`,
           `.diff-grid-right a[data-linenumber="${escapedLineNumber}"]`,
@@ -2351,10 +2484,15 @@ function findNativeCommentButtonInFile(
           `.left-side a[data-linenumber="${escapedLineNumber}"]`,
           `.old_line a[data-linenumber="${escapedLineNumber}"]`,
         ];
+  const selectors = [
+    ...interopSelectors,
+    ...visualSideSelectors(preferredVisualSide),
+    ...visualSideSelectors(fallbackVisualSide),
+  ];
 
-  for (const selector of sideSelectors) {
+  for (const selector of selectors) {
     for (const lineAnchor of Array.from(nativeFile.querySelectorAll<HTMLElement>(selector))) {
-      const button = findCommentButtonNearLineAnchor(lineAnchor, side);
+      const button = findCommentButtonNearLineAnchor(lineAnchor);
       if (button != null) {
         return button;
       }
@@ -2364,14 +2502,14 @@ function findNativeCommentButtonInFile(
   return null;
 }
 
-function findCommentButtonNearLineAnchor(
-  lineAnchor: HTMLElement,
-  side: 'left' | 'right'
-): HTMLElement | null {
+function findCommentButtonNearLineAnchor(lineAnchor: HTMLElement): HTMLElement | null {
+  const sideContainer = lineAnchor.closest<HTMLElement>(
+    '.diff-grid-left, .diff-grid-right, [data-testid="left-side"], [data-testid="right-side"]'
+  );
+  const lineNumberCell = lineAnchor.closest<HTMLElement>('.diff-line-num');
   const scopes = [
-    lineAnchor.closest(side === 'right' ? '.diff-grid-right' : '.diff-grid-left'),
-    lineAnchor.closest(side === 'right' ? '[data-testid="right-side"]' : '[data-testid="left-side"]'),
-    lineAnchor.closest('.diff-line-num'),
+    lineNumberCell,
+    sideContainer,
     lineAnchor.closest('.line_holder'),
     lineAnchor.parentElement,
   ];
