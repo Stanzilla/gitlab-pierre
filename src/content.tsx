@@ -1098,6 +1098,7 @@ function PierreDiffFile({
   const [activeCommentLine, setActiveCommentLine] = useState<ActiveCommentLine | null>(null);
   const [commentHost, setCommentHost] = useState<HTMLElement | null>(null);
   const selectedRangeRef = useRef<SelectedLineRange | null>(null);
+  const lastMultiLineRangeRef = useRef<{ range: SelectedLineRange; at: number } | null>(null);
 
   const lineAnnotations = useMemo<DiffLineAnnotation[] | undefined>(
     () =>
@@ -1113,13 +1114,41 @@ function PierreDiffFile({
   );
 
   const handleLineSelected = useCallback((range: SelectedLineRange | null) => {
+    console.info('[GitLab Pierre] handleLineSelected', { range });
     selectedRangeRef.current = range;
+    if (range == null) {
+      lastMultiLineRangeRef.current = null;
+    } else if (range.start !== range.end) {
+      lastMultiLineRangeRef.current = { range, at: Date.now() };
+    }
   }, []);
 
   const handleAddComment = useCallback(
     (line: GetHoveredLineResult<'diff'>) => {
-      const range = selectedRangeRef.current;
+      const liveRange = selectedRangeRef.current;
+      const last = lastMultiLineRangeRef.current;
+      let range = liveRange;
+      let fallbackUsed = false;
+      if (range == null || range.start === range.end) {
+        if (last != null) {
+          const lo = Math.min(last.range.start, last.range.end);
+          const hi = Math.max(last.range.start, last.range.end);
+          if (line.lineNumber >= lo && line.lineNumber <= hi) {
+            range = last.range;
+            fallbackUsed = true;
+          }
+        }
+      }
       const multiLine = resolveMultiLineRange(range, line);
+      console.info('[GitLab Pierre] handleAddComment v0.4.25', {
+        clickLine: line.lineNumber,
+        clickSide: line.side,
+        liveRange,
+        last,
+        fallbackUsed,
+        rangeUsed: range,
+        multiLine,
+      });
 
       if (multiLine == null) {
         setActiveCommentLine({
@@ -1712,16 +1741,75 @@ interface DiffsAppLike {
   $options?: { name?: string };
   diffFiles: NativeDiffFileEntry[];
   loadCollapsedDiff: (file: NativeDiffFileEntry) => unknown;
+  goToFile: (arg: { path: string }) => unknown;
+}
+
+interface VueInstanceLike {
+  $root?: VueInstanceLike;
+  $children?: VueInstanceLike[];
+  $options?: { name?: string };
+  diffFiles?: unknown;
+  loadCollapsedDiff?: unknown;
+  goToFile?: unknown;
+}
+
+function isDiffsAppLike(inst: unknown): inst is DiffsAppLike {
+  if (inst == null || typeof inst !== 'object') return false;
+  const candidate = inst as VueInstanceLike;
+  return (
+    Array.isArray(candidate.diffFiles) &&
+    typeof candidate.loadCollapsedDiff === 'function'
+  );
+}
+
+function traverseVueChildrenForDiffsApp(node: VueInstanceLike | undefined): DiffsAppLike | null {
+  if (node == null) return null;
+  if (isDiffsAppLike(node)) return node;
+  const children = node.$children;
+  if (Array.isArray(children)) {
+    for (const child of children) {
+      const found = traverseVueChildrenForDiffsApp(child);
+      if (found != null) return found;
+    }
+  }
+  return null;
 }
 
 function findDiffsAppInstance(targets: MountTargets): DiffsAppLike | null {
   const seed = targets.diffContainer.querySelector('.diff-file') ?? targets.diffContainer;
+
+  // 1) Walk up the ancestor chain from the seed.
   let walker: Element | null = seed as Element;
+  let firstVueInstance: VueInstanceLike | null = null;
   while (walker != null) {
-    const inst = (walker as Element & { __vue__?: DiffsAppLike }).__vue__;
-    if (inst != null && inst.$options?.name === 'DiffsApp') return inst;
+    const inst = (walker as Element & { __vue__?: VueInstanceLike }).__vue__;
+    if (inst != null) {
+      if (firstVueInstance == null) firstVueInstance = inst;
+      if (isDiffsAppLike(inst)) return inst;
+      if (inst.$options?.name === 'DiffsApp' && isDiffsAppLike(inst)) return inst;
+    }
     walker = walker.parentElement;
   }
+
+  // 2) Walk down through the diff container's descendants.
+  const stack: Element[] = [targets.diffContainer];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    const inst = (node as Element & { __vue__?: VueInstanceLike }).__vue__;
+    if (inst != null) {
+      if (firstVueInstance == null) firstVueInstance = inst;
+      if (isDiffsAppLike(inst)) return inst;
+    }
+    for (const child of Array.from(node.children)) stack.push(child);
+  }
+
+  // 3) From any Vue instance we found, traverse the full $root tree.
+  if (firstVueInstance != null) {
+    const root = firstVueInstance.$root ?? firstVueInstance;
+    const found = traverseVueChildrenForDiffsApp(root);
+    if (found != null) return found;
+  }
+
   return null;
 }
 
@@ -1740,41 +1828,111 @@ function findNativeDiffEntry(
   return null;
 }
 
-function ensureCollapsedDiffLoaded(
-  file: FileDiffMetadata,
-  targets: MountTargets
+function waitForCondition(
+  predicate: () => boolean,
+  scope: Node,
+  timeoutMs: number
 ): Promise<boolean> {
-  const app = findDiffsAppInstance(targets);
-  if (app == null) return Promise.resolve(true);
-
-  const paths = getDiffFilePaths(file);
-  const entry = findNativeDiffEntry(app, paths);
-  if (entry == null) return Promise.resolve(true);
-  if (entry.viewer?.collapsed !== true) return Promise.resolve(true);
-
-  try {
-    app.loadCollapsedDiff(entry);
-  } catch {
-    return Promise.resolve(false);
-  }
-
+  if (predicate()) return Promise.resolve(true);
   return new Promise((resolve) => {
     const finish = (ok: boolean) => {
       observer.disconnect();
-      if (timeoutId != null) clearTimeout(timeoutId);
+      clearTimeout(timeoutId);
       resolve(ok);
     };
     const observer = new MutationObserver(() => {
-      if (entry.viewer?.collapsed === false || findNativeDiffFiles(paths).length > 0) {
-        finish(true);
-      }
+      if (predicate()) finish(true);
     });
-    observer.observe(targets.diffContainer, { childList: true, subtree: true });
-    const timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => finish(false), 5000);
-    if (entry.viewer?.collapsed === false || findNativeDiffFiles(paths).length > 0) {
-      finish(true);
-    }
+    observer.observe(scope, { childList: true, subtree: true });
+    const timeoutId = setTimeout(() => finish(false), timeoutMs);
   });
+}
+
+async function ensureNativeFileMounted(
+  file: FileDiffMetadata,
+  targets: MountTargets
+): Promise<boolean> {
+  const paths = getDiffFilePaths(file);
+  const log = (step: string, extra: Record<string, unknown> = {}): void => {
+    console.info('[GitLab Pierre] ensureNativeFileMounted', step, { paths, ...extra });
+  };
+
+  const app = findDiffsAppInstance(targets);
+  if (app == null) {
+    const ok = findNativeDiffFiles(paths).length > 0;
+    const seedEl = targets.diffContainer.querySelector('.diff-file') ?? targets.diffContainer;
+    const ancestorVueNames: string[] = [];
+    let probe: Element | null = seedEl as Element;
+    while (probe != null && ancestorVueNames.length < 12) {
+      const inst = (probe as Element & { __vue__?: VueInstanceLike }).__vue__;
+      if (inst != null) {
+        ancestorVueNames.push(
+          `${inst.$options?.name ?? '<anon>'}${
+            Array.isArray(inst.diffFiles) ? '[diffFiles]' : ''
+          }`
+        );
+      }
+      probe = probe.parentElement;
+    }
+    log('no-DiffsApp', { ok, ancestorVueNames });
+    return ok;
+  }
+
+  const entry = findNativeDiffEntry(app, paths);
+  if (entry == null) {
+    const ok = findNativeDiffFiles(paths).length > 0;
+    log('no-entry-in-diffFiles', {
+      ok,
+      diffFilesCount: app.diffFiles.length,
+      sampleEntries: app.diffFiles.slice(0, 3).map((e) => e.file_path),
+    });
+    return ok;
+  }
+
+  log('entry-found', {
+    collapsed: entry.viewer?.collapsed,
+    viewerName: entry.viewer?.name,
+    inDom: findNativeDiffFiles(paths).length > 0,
+  });
+
+  if (entry.viewer?.collapsed === true) {
+    try {
+      app.loadCollapsedDiff(entry);
+      log('called-loadCollapsedDiff');
+    } catch (e) {
+      log('loadCollapsedDiff-threw', { error: String(e) });
+      return false;
+    }
+    const uncollapsed = await waitForCondition(
+      () => entry.viewer?.collapsed !== true,
+      targets.diffContainer,
+      5000
+    );
+    log('after-uncollapse-wait', { uncollapsed });
+    if (!uncollapsed) return false;
+  }
+
+  if (findNativeDiffFiles(paths).length === 0) {
+    const path = entry.file_path ?? entry.new_path ?? entry.old_path ?? '';
+    if (path.length > 0) {
+      try {
+        app.goToFile({ path });
+        log('called-goToFile', { path });
+      } catch (e) {
+        log('goToFile-threw', { error: String(e), path });
+      }
+    }
+  } else {
+    log('already-in-dom');
+  }
+
+  const mounted = await waitForCondition(
+    () => findNativeDiffFiles(paths).length > 0,
+    targets.diffContainer,
+    5000
+  );
+  log('after-mount-wait', { mounted });
+  return mounted;
 }
 
 function scrollNativeContainerToLine(
@@ -1838,6 +1996,7 @@ function startNativeCommentHijack(
 
   const fail = (message: string) => {
     if (cancelled) return;
+    console.info('[GitLab Pierre] hijack fail', { message, line });
     cleanup();
     showToast(message, 'error');
     onTeardown();
@@ -1858,6 +2017,11 @@ function startNativeCommentHijack(
 
   const moveFormIntoSlot = (form: HTMLElement) => {
     if (cancelled) return;
+    console.info('[GitLab Pierre] moveFormIntoSlot', {
+      formTag: form.tagName,
+      formClass: form.className,
+      hasMultiLine: line.multiLine != null,
+    });
     movedForm = form;
     host.appendChild(form);
     spawnObserver?.disconnect();
@@ -1875,6 +2039,10 @@ function startNativeCommentHijack(
       if (cancelled) return;
       if (movedForm == null) return;
       if (movedForm.isConnected && host.contains(movedForm)) return;
+      console.info('[GitLab Pierre] teardownObserver fired — form left slot', {
+        movedFormConnected: movedForm.isConnected,
+        hostContainsForm: host.contains(movedForm),
+      });
       teardownObserver?.disconnect();
       teardownObserver = null;
       movedForm = null;
@@ -1888,9 +2056,14 @@ function startNativeCommentHijack(
     if (cancelled) return;
     const nativeFile =
       nativeButton.closest<HTMLElement>('.diff-file') ?? nativeButton.ownerDocument.body;
+    console.info('[GitLab Pierre] proceedWithButton', {
+      nativeButtonClass: nativeButton.className,
+      hasMultiLine: line.multiLine != null,
+    });
 
     const existing = findNewForm(nativeFile);
     if (existing != null) {
+      console.info('[GitLab Pierre] proceedWithButton: existing form already present, reusing');
       moveFormIntoSlot(existing);
       return;
     }
@@ -1928,6 +2101,12 @@ function startNativeCommentHijack(
     }
 
     const initial = tryFindButton();
+    console.info('[GitLab Pierre] beginLookup', {
+      lineNumber: line.lineNumber,
+      side: line.side,
+      hasMultiLine: line.multiLine != null,
+      initialFound: initial != null,
+    });
     if (initial != null) {
       proceedWithButton(initial);
       return;
@@ -1963,10 +2142,10 @@ function startNativeCommentHijack(
   if (targets != null) {
     revealNativeForRender(targets);
     nativeRevealed = true;
-    void ensureCollapsedDiffLoaded(file, targets).then((ok) => {
+    void ensureNativeFileMounted(file, targets).then((ok) => {
       if (cancelled) return;
       if (!ok) {
-        fail('GitLab could not load the collapsed diff for this file.');
+        fail('GitLab could not load this file in the native diff view.');
         return;
       }
       beginLookup();
@@ -1979,10 +2158,20 @@ function startNativeCommentHijack(
 }
 
 function applyMultiLineRangeToForm(host: HTMLElement, range: MultiLineCommentRange): void {
+  console.info('[GitLab Pierre] applyMultiLineRangeToForm', {
+    startLine: range.startLine,
+    endLine: range.endLine,
+    startSide: range.startSide,
+    anchorLine: range.anchorLine,
+    anchorSide: range.anchorSide,
+  });
   if (trySetMultiLineRange(host, range)) return;
 
+  let attempts = 0;
   const observer = new MutationObserver(() => {
+    attempts += 1;
     if (trySetMultiLineRange(host, range)) {
+      console.info('[GitLab Pierre] applyMultiLineRangeToForm applied via observer', { attempts });
       observer.disconnect();
       window.clearTimeout(timeoutId);
     }
@@ -1990,6 +2179,7 @@ function applyMultiLineRangeToForm(host: HTMLElement, range: MultiLineCommentRan
   observer.observe(host, { childList: true, subtree: true });
 
   const timeoutId = window.setTimeout(() => {
+    console.info('[GitLab Pierre] applyMultiLineRangeToForm timed out', { attempts });
     observer.disconnect();
   }, 3000);
 }
@@ -1998,15 +2188,40 @@ function trySetMultiLineRange(host: HTMLElement, range: MultiLineCommentRange): 
   const select =
     host.querySelector<HTMLSelectElement>('#comment-line-start') ??
     host.querySelector<HTMLSelectElement>('select.gl-form-select');
-  if (select == null || select.options.length === 0) return false;
+  if (select == null) {
+    console.info('[GitLab Pierre] trySetMultiLineRange: no select element yet');
+    return false;
+  }
+  if (select.options.length === 0) {
+    console.info('[GitLab Pierre] trySetMultiLineRange: select has 0 options yet', {
+      selectId: select.id,
+    });
+    return false;
+  }
 
+  const optionTexts = Array.from(select.options).map((o) => o.textContent?.trim() ?? '');
   const targetIndex = findOptionIndexForLine(select, range.startLine, range.startSide);
+  console.info('[GitLab Pierre] trySetMultiLineRange', {
+    selectId: select.id,
+    optionsCount: select.options.length,
+    optionTextsHead: optionTexts.slice(0, 5),
+    optionTextsTail: optionTexts.slice(-5),
+    currentIndex: select.selectedIndex,
+    currentText: optionTexts[select.selectedIndex],
+    targetIndex,
+    targetLine: range.startLine,
+    targetSide: range.startSide,
+  });
   if (targetIndex == null) return false;
   if (select.selectedIndex === targetIndex) return true;
 
   select.selectedIndex = targetIndex;
   select.dispatchEvent(new Event('change', { bubbles: true }));
   select.dispatchEvent(new Event('input', { bubbles: true }));
+  console.info('[GitLab Pierre] trySetMultiLineRange: applied', {
+    newIndex: select.selectedIndex,
+    newText: select.options[targetIndex]?.textContent?.trim(),
+  });
   return true;
 }
 

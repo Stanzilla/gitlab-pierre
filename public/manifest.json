@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GitLab Pierre",
   "description": "Replace GitLab changes diffs and file tree with Pierre-powered views.",
-  "version": "0.4.17",
+  "version": "0.4.26",
   "content_scripts": [
     {
       "matches": ["https://gitlab.com/*"],
