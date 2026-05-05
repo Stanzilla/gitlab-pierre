@@ -2,8 +2,7 @@
 
 Chrome extension that replaces the `gitlab.com` changes view with Pierre-powered diffs and a Pierre-powered changed-files tree.
 
-<img width="3180" height="2410" alt="Google Chrome-2026-04-29-11 52 12" src="https://github.com/user-attachments/assets/ed40eb13-bc91-486d-b527-efb6d22d0a18" />
-
+<img width="3128" height="1688" alt="Google Chrome-2026-05-05-18 38 14" src="https://github.com/user-attachments/assets/4a3b0039-03a2-4493-8d67-d819bfd98e7f" />
 
 ## Development
 
