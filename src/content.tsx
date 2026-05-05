@@ -260,6 +260,29 @@ pre, code {
   text-align: right;
   user-select: none;
 }
+
+[data-gutter-utility-slot] {
+  z-index: 5;
+  width: 100%;
+  left: 0 !important;
+  right: 0 !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+[data-gutter-utility-slot] ::slotted(*) {
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+[data-column-number]:hover [data-gutter-utility-slot] ::slotted(*),
+[data-column-number][data-hovered] [data-gutter-utility-slot] ::slotted(*) {
+  opacity: 1;
+}
 `;
 
 const PIERRE_DIFF_GITLAB_BACKGROUND_CSS = `
@@ -2370,8 +2393,29 @@ function LineCommentButton({
   getHoveredLine: () => GetHoveredLineResult<'diff'> | undefined;
   onAddComment: (line: GetHoveredLineResult<'diff'>) => void;
 }): React.JSX.Element {
+  const ref = useRef<HTMLButtonElement>(null);
+
+  // Attach a native pointerdown listener to stop propagation before Pierre's
+  // InteractionManager (on the shadow-DOM <pre>) can start a line-selection
+  // session. The actual action is handled by onClick for proper button
+  // semantics (keyboard, drag-away-to-cancel).
+  useEffect(() => {
+    const btn = ref.current;
+    if (btn == null) return;
+
+    const handler = (event: PointerEvent) => {
+      if (event.button !== 0 || !event.isPrimary) return;
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    btn.addEventListener('pointerdown', handler);
+    return () => btn.removeEventListener('pointerdown', handler);
+  }, []);
+
   return (
     <button
+      ref={ref}
       aria-label="Comment on this line"
       className="gitlab-pierre-line-comment-button"
       onClick={(event) => {
@@ -2385,6 +2429,11 @@ function LineCommentButton({
         }
 
         onAddComment(hoveredLine);
+      }}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}
       title="Comment on this line"
       type="button"
@@ -2449,6 +2498,189 @@ const PAGE_BRIDGE_RESPONSE_EVENT = 'gitlab-pierre:native-file-response';
 const PAGE_BRIDGE_INJECTED_ATTR = 'data-gitlab-pierre-page-bridge-injected';
 
 let pageBridgeInjection: Promise<boolean> | null = null;
+
+// --- API-based inline comment fallback ---
+
+interface MrContext {
+  projectPath: string;
+  mrIid: string;
+}
+
+function getMrContext(): MrContext | null {
+  const match = location.pathname.match(/^\/(.+?)\/-\/merge_requests\/(\d+)/);
+  if (match?.[1] == null || match[2] == null) return null;
+  return { projectPath: match[1], mrIid: match[2] };
+}
+
+function getCsrfToken(): string | null {
+  return document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? null;
+}
+
+interface DiffVersionInfo {
+  base_commit_sha: string;
+  head_commit_sha: string;
+  start_commit_sha: string;
+}
+
+let cachedDiffVersion: DiffVersionInfo | null = null;
+
+async function fetchDiffVersionInfo(ctx: MrContext): Promise<DiffVersionInfo | null> {
+  if (cachedDiffVersion != null) return cachedDiffVersion;
+  const encodedProject = encodeURIComponent(ctx.projectPath);
+  const url = `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/versions`;
+  try {
+    const response = await fetch(url, { credentials: 'same-origin' });
+    if (!response.ok) return null;
+    const versions = (await response.json()) as Array<{
+      base_commit_sha?: string;
+      head_commit_sha?: string;
+      start_commit_sha?: string;
+    }>;
+    const latest = versions[0];
+    if (latest?.base_commit_sha == null || latest.head_commit_sha == null || latest.start_commit_sha == null) {
+      return null;
+    }
+    cachedDiffVersion = {
+      base_commit_sha: latest.base_commit_sha,
+      head_commit_sha: latest.head_commit_sha,
+      start_commit_sha: latest.start_commit_sha,
+    };
+    return cachedDiffVersion;
+  } catch {
+    return null;
+  }
+}
+
+async function createDraftNote(
+  ctx: MrContext,
+  version: DiffVersionInfo,
+  filePath: string,
+  oldFilePath: string,
+  lineNumber: number,
+  side: AnnotationSide,
+  body: string
+): Promise<boolean> {
+  const encodedProject = encodeURIComponent(ctx.projectPath);
+  const url = `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/draft_notes`;
+  const csrf = getCsrfToken();
+  const position: Record<string, string | number> = {
+    position_type: 'text',
+    base_sha: version.base_commit_sha,
+    head_sha: version.head_commit_sha,
+    start_sha: version.start_commit_sha,
+    new_path: filePath,
+    old_path: oldFilePath,
+  };
+  if (side === 'additions') {
+    position.new_line = lineNumber;
+  } else {
+    position.old_line = lineNumber;
+  }
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (csrf != null) headers['X-CSRF-Token'] = csrf;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers,
+      body: JSON.stringify({ note: body, position }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function renderApiCommentForm(
+  host: HTMLElement,
+  file: FileDiffMetadata,
+  line: ActiveCommentLine,
+  onDone: () => void
+): void {
+  const ctx = getMrContext();
+  if (ctx == null) {
+    showToast('Cannot determine MR context for inline comment.', 'error');
+    onDone();
+    return;
+  }
+
+  const filePath = normalizeDiffPath(file.name) ?? file.name;
+  const oldFilePath = normalizeDiffPath(file.prevName ?? file.name) ?? filePath;
+  const wrapper = document.createElement('div');
+  wrapper.className = 'gitlab-pierre-comment-slot';
+  wrapper.style.cssText = 'padding: 12px; border: 1px solid var(--gl-border-color-default, #dcdcde); border-radius: 6px; margin: 8px 0; background: var(--gl-background-color-default, #fff);';
+
+  const label = document.createElement('div');
+  label.style.cssText = 'font-size: 12px; color: var(--gl-text-color-subtle, #626168); margin-bottom: 8px;';
+  label.textContent = `Draft comment on ${filePath}:${line.lineNumber} (${line.side})`;
+
+  const textarea = document.createElement('textarea');
+  textarea.style.cssText = 'width: 100%; min-height: 80px; padding: 8px; border: 1px solid var(--gl-border-color-default, #dcdcde); border-radius: 4px; font: 13px/1.4 ui-monospace, monospace; resize: vertical; background: var(--gl-background-color-default, #fff); color: var(--gl-text-color-default, inherit);';
+  textarea.placeholder = 'Write a comment… (Ctrl+Enter to submit)';
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      submitBtn.click();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelBtn.click();
+    }
+  });
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end;';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'btn gl-button btn-default btn-sm';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => {
+    wrapper.remove();
+    onDone();
+  });
+
+  const submitBtn = document.createElement('button');
+  submitBtn.type = 'button';
+  submitBtn.className = 'btn gl-button btn-confirm btn-sm';
+  submitBtn.textContent = 'Add draft comment';
+  submitBtn.addEventListener('click', () => {
+    const body = textarea.value.trim();
+    if (body.length === 0) {
+      textarea.focus();
+      return;
+    }
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting…';
+    void (async () => {
+      const version = await fetchDiffVersionInfo(ctx);
+      if (version == null) {
+        showToast('Could not fetch MR version info.', 'error');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Add draft comment';
+        return;
+      }
+      const ok = await createDraftNote(ctx, version, filePath, oldFilePath, line.lineNumber, line.side, body);
+      if (ok) {
+        showToast('Draft comment added.', 'success');
+        wrapper.remove();
+        onDone();
+      } else {
+        showToast('Failed to create draft comment.', 'error');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Add draft comment';
+      }
+    })();
+  });
+
+  actions.append(cancelBtn, submitBtn);
+  wrapper.append(label, textarea, actions);
+  host.innerHTML = '';
+  host.append(wrapper);
+  textarea.focus();
+}
 
 function revealNativeForRender(targets: MountTargets): void {
   const c = targets.diffContainer;
@@ -2696,6 +2928,33 @@ async function mountNativeFileViaPageBridge(
   return waitForNativeDiffFile(paths, targets);
 }
 
+async function forceNativeRenderAndWait(
+  paths: string[],
+  targets: MountTargets
+): Promise<boolean> {
+  const c = targets.diffContainer;
+  // Temporarily make the container fully visible so GitLab's lazy-loading
+  // (IntersectionObserver, Vue watchers, etc.) can render the diff files.
+  const prevStyle = c.style.cssText;
+  const prevHidden = c.classList.contains(HIDDEN_CLASS);
+  c.classList.remove(HIDDEN_CLASS);
+  c.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; overflow: auto !important; z-index: -1 !important; opacity: 0.01 !important;';
+  console.info('[GitLab Pierre] forceNativeRenderAndWait: revealing container', { paths });
+
+  const found = await waitForCondition(
+    () => findNativeDiffFiles(paths).length > 0,
+    c,
+    8000
+  );
+
+  // Restore the hidden state
+  c.style.cssText = prevStyle;
+  if (prevHidden) c.classList.add(HIDDEN_CLASS);
+
+  console.info('[GitLab Pierre] forceNativeRenderAndWait: result', { found, paths });
+  return found;
+}
+
 async function ensureNativeFileMounted(
   file: FileDiffMetadata,
   targets: MountTargets
@@ -2723,7 +2982,11 @@ async function ensureNativeFileMounted(
       probe = probe.parentElement;
     }
     log('no-DiffsApp', { ok, ancestorVueNames });
-    return ok || mountNativeFileViaPageBridge(paths, targets);
+    if (ok) return true;
+    const bridged = await mountNativeFileViaPageBridge(paths, targets);
+    if (bridged) return true;
+    // Last resort: make container fully visible to trigger lazy rendering
+    return forceNativeRenderAndWait(paths, targets);
   }
 
   const entry = findNativeDiffEntry(app, paths);
@@ -2846,9 +3109,14 @@ function startNativeCommentHijack(
     if (cancelled) return;
     console.info('[GitLab Pierre] hijack fail', { message, line });
     cleanup();
-    showToast(message, 'error');
-    onTeardown();
-    fallbackToNativeForLine(file, line);
+    // Try API-based comment form as fallback
+    if (host != null && getMrContext() != null) {
+      renderApiCommentForm(host, file, line, onTeardown);
+    } else {
+      showToast(message, 'error');
+      onTeardown();
+      fallbackToNativeForLine(file, line);
+    }
   };
 
   const hoveredLine: GetHoveredLineResult<'diff'> = {
@@ -3382,6 +3650,23 @@ function nativeDiffFileMatchesPath(diffFile: HTMLElement, paths: string[]): bool
   return paths.some((path) => values.some((value) => value === path || value.endsWith(`/${path}`)));
 }
 
+function collectShadowRoots(root: Element): ShadowRoot[] {
+  const results: ShadowRoot[] = [];
+  const walk = (el: Element) => {
+    if (el.shadowRoot != null) {
+      results.push(el.shadowRoot);
+      for (const child of el.shadowRoot.querySelectorAll('*')) {
+        walk(child);
+      }
+    }
+    for (const child of el.children) {
+      walk(child);
+    }
+  };
+  walk(root);
+  return results;
+}
+
 function findNativeCommentButtonInFile(
   nativeFile: HTMLElement,
   lineNumber: number,
@@ -3420,6 +3705,7 @@ function findNativeCommentButtonInFile(
     ...visualSideSelectors(fallbackVisualSide),
   ];
 
+  // Search the main DOM tree of the native file
   for (const selector of selectors) {
     for (const lineAnchor of Array.from(nativeFile.querySelectorAll<HTMLElement>(selector))) {
       const button = findCommentButtonNearLineAnchor(lineAnchor);
@@ -3429,7 +3715,58 @@ function findNativeCommentButtonInFile(
     }
   }
 
+  // Rapid-diffs: search inside shadow roots of child custom elements
+  const shadowRoots = collectShadowRoots(nativeFile);
+  for (const root of shadowRoots) {
+    for (const selector of selectors) {
+      for (const lineAnchor of Array.from(root.querySelectorAll<HTMLElement>(selector))) {
+        const button = findCommentButtonNearLineAnchor(lineAnchor);
+        if (button != null) {
+          return button;
+        }
+      }
+    }
+  }
+
+  console.debug('[GitLab Pierre] findNativeCommentButtonInFile: not found', {
+    lineNumber,
+    side,
+    nativeFileTag: nativeFile.tagName,
+    nativeFileTestId: nativeFile.getAttribute('data-testid'),
+    childCount: nativeFile.children.length,
+    shadowRootsFound: shadowRoots.length,
+    hasInteropRows: nativeFile.querySelectorAll('[data-interop-type]').length,
+    hasDiffLineNums: nativeFile.querySelectorAll('.diff-line-num').length,
+    hasLineAnchors: nativeFile.querySelectorAll('a[data-linenumber]').length,
+  });
+
+  // If the file is collapsed (has header but no lines), try to expand it
+  expandCollapsedNativeDiffFile(nativeFile);
+
   return null;
+}
+
+const EXPAND_ATTEMPTED_ATTR = 'data-gitlab-pierre-expand-attempted';
+
+function expandCollapsedNativeDiffFile(nativeFile: HTMLElement): void {
+  if (nativeFile.hasAttribute(EXPAND_ATTEMPTED_ATTR)) return;
+  // Only expand if there are no line rows (file is collapsed)
+  const hasLines =
+    nativeFile.querySelectorAll('.diff-line-num, [data-interop-type], a[data-linenumber]').length > 0;
+  if (hasLines) return;
+
+  const expandButton =
+    nativeFile.querySelector<HTMLElement>('button[aria-label="Show file contents"]') ??
+    nativeFile.querySelector<HTMLElement>('button[aria-label="Expand file"]') ??
+    nativeFile.querySelector<HTMLElement>('.js-file-title button.btn-icon') ??
+    nativeFile.querySelector<HTMLElement>('[data-testid="expand-file"]');
+  if (expandButton == null) return;
+
+  nativeFile.setAttribute(EXPAND_ATTEMPTED_ATTR, '');
+  console.info('[GitLab Pierre] expandCollapsedNativeDiffFile: clicking expand', {
+    label: expandButton.getAttribute('aria-label'),
+  });
+  expandButton.click();
 }
 
 function findCommentButtonNearLineAnchor(lineAnchor: HTMLElement): HTMLElement | null {
