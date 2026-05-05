@@ -883,6 +883,14 @@ function PierreChangesView({
   const unsafeCSS = useMemo(() => getPierreDiffUnsafeCSS(themeSettings), [themeSettings]);
   const isPierreView = viewMode === 'pierre';
 
+  // Fetch discussions once for the whole MR
+  const [discussions, setDiscussions] = useState<DiscussionThread[] | null>(null);
+  useEffect(() => {
+    const ctx = getMrContext();
+    if (ctx == null) return;
+    void fetchMrDiscussions(ctx).then(setDiscussions);
+  }, []);
+
   const toggleFile = useCallback((path: string) => {
     setCollapsedPaths((prev) => {
       const next = new Set(prev);
@@ -987,6 +995,7 @@ function PierreChangesView({
             return (
               <PierreDiffFile
                 areDiffsCollapsed={collapsedPaths.has(path)}
+                discussions={discussions}
                 file={file}
                 key={`${path}:${file.prevName ?? ''}:${index}`}
                 onToggle={() => toggleFile(path)}
@@ -1813,8 +1822,8 @@ async function fetchMrDiscussions(ctx: MrContext): Promise<DiscussionThread[]> {
   const encodedProject = encodeURIComponent(ctx.projectPath);
   const threads: DiscussionThread[] = [];
   let page = 1;
-  // Fetch paginated discussions
-  while (true) {
+  const MAX_PAGES = 5; // Cap at 500 discussions to avoid slow loads
+  while (page <= MAX_PAGES) {
     const url = `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/discussions?per_page=100&page=${page}`;
     try {
       const response = await fetch(url, { credentials: 'same-origin' });
@@ -1859,6 +1868,11 @@ async function fetchMrDiscussions(ctx: MrContext): Promise<DiscussionThread[]> {
   } catch { /* ignore */ }
 
   discussionsCache.set(cacheKey, threads);
+  console.debug('[GitLab Pierre] fetchMrDiscussions', {
+    total: threads.length,
+    withPosition: threads.filter((t) => t.position?.position_type === 'text').length,
+    paths: [...new Set(threads.flatMap((t) => [t.position?.new_path, t.position?.old_path].filter(Boolean)))].slice(0, 10),
+  });
   return threads;
 }
 
@@ -1890,18 +1904,6 @@ function getDiscussionsForFile(
   return results;
 }
 
-function useFileDiscussions(filePath: string): DiscussionThread[] | null {
-  const [threads, setThreads] = useState<DiscussionThread[] | null>(null);
-  useEffect(() => {
-    const ctx = getMrContext();
-    if (ctx == null) return;
-    void fetchMrDiscussions(ctx).then((all) => {
-      setThreads(all);
-    });
-  }, [filePath]);
-  return threads;
-}
-
 function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.JSX.Element {
   const isDraft = thread.id.startsWith('draft-');
   return (
@@ -1931,6 +1933,7 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
 
 function PierreDiffFile({
   areDiffsCollapsed,
+  discussions,
   file,
   onToggle,
   path,
@@ -1939,6 +1942,7 @@ function PierreDiffFile({
   unsafeCSS,
 }: {
   areDiffsCollapsed: boolean;
+  discussions: DiscussionThread[] | null;
   file: FileDiffMetadata;
   onToggle: () => void;
   path: string;
@@ -1980,11 +1984,10 @@ function PierreDiffFile({
   const lastMultiLineRangeRef = useRef<{ range: SelectedLineRange; at: number } | null>(null);
 
   const filePath = useMemo(() => normalizeDiffPath(file.name) ?? file.name, [file.name]);
-  const allThreads = useFileDiscussions(filePath);
   const fileDiscussions = useMemo(() => {
-    if (allThreads == null) return [];
-    return getDiscussionsForFile(allThreads, filePath);
-  }, [allThreads, filePath]);
+    if (discussions == null) return [];
+    return getDiscussionsForFile(discussions, filePath);
+  }, [discussions, filePath]);
 
   const lineAnnotations = useMemo<DiffLineAnnotation<AnnotationMeta>[] | undefined>(() => {
     const annotations: DiffLineAnnotation<AnnotationMeta>[] = [];
