@@ -3,14 +3,14 @@
   "version": "0.5.2",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.33.2",
+  "packageManager": "pnpm@10.33.3",
   "scripts": {
     "build": "pnpm typecheck && vite build --config vite.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "dev": "vite build --config vite.config.ts --watch"
   },
   "dependencies": {
-    "@pierre/diffs": "1.1.19",
+    "@pierre/diffs": "1.1.20",
     "@pierre/trees": "1.0.0-beta.3",
     "react": "19.2.5",
     "react-dom": "19.2.5"
