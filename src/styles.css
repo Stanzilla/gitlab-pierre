@@ -86,7 +86,7 @@
   gap: 0.5rem;
   flex: 1 1 0;
   min-width: 0;
-  padding: 0 1.25rem 1rem;
+  padding: 0.75rem 0.5rem 1rem;
 }
 
 .gitlab-pierre-tree {
@@ -99,6 +99,7 @@
 
 .gitlab-pierre-file-browser {
   color: var(--gl-text-color-default, inherit);
+  padding-top: 0.75rem;
 }
 
 .gitlab-pierre-file-browser .tree-list-holder {

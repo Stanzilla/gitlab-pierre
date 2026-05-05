@@ -846,22 +846,15 @@ function SidebarToggleIcon(): React.JSX.Element {
     <svg
       aria-hidden="true"
       className="gl-button-icon"
-      fill="none"
       height={16}
       viewBox="0 0 16 16"
       width={16}
       xmlns="http://www.w3.org/2000/svg"
     >
-      <rect
-        height={12.5}
-        rx={1.25}
-        stroke="currentColor"
-        strokeWidth={1.5}
-        width={12.5}
-        x={1.75}
-        y={1.75}
+      <path
+        d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3zm1.5.5v9h2v-9h-2zm3.5 0v9h6v-9H7z"
+        fill="currentColor"
       />
-      <path d="M5.25 2V14" stroke="currentColor" strokeWidth={1.5} />
     </svg>
   );
 }
