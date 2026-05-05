@@ -91,6 +91,7 @@
 
 .gitlab-pierre-layout {
   align-items: flex-start;
+  padding-left: 0;
 }
 
 .gitlab-pierre-layout-no-sidebar > [data-gitlab-pierre="diffs-area"] {
