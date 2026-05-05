@@ -1776,6 +1776,159 @@ function FileActionsKebab({
   );
 }
 
+// --- Inline discussion annotations ---
+
+type AnnotationMeta =
+  | { kind: 'active-comment' }
+  | { kind: 'discussion'; discussionId: string; notes: DiscussionNote[] };
+
+interface DiscussionNote {
+  id: number;
+  author: { name: string; avatar_url?: string };
+  body: string;
+  created_at: string;
+  resolved?: boolean;
+  type?: string | null;
+}
+
+interface DiscussionThread {
+  id: string;
+  notes: DiscussionNote[];
+  position?: {
+    new_line?: number | null;
+    old_line?: number | null;
+    new_path?: string;
+    old_path?: string;
+    position_type?: string;
+  } | null;
+}
+
+let discussionsCache: Map<string, DiscussionThread[]> = new Map();
+
+async function fetchMrDiscussions(ctx: MrContext): Promise<DiscussionThread[]> {
+  const cacheKey = `${ctx.projectPath}!${ctx.mrIid}`;
+  const cached = discussionsCache.get(cacheKey);
+  if (cached != null) return cached;
+
+  const encodedProject = encodeURIComponent(ctx.projectPath);
+  const threads: DiscussionThread[] = [];
+  let page = 1;
+  // Fetch paginated discussions
+  while (true) {
+    const url = `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/discussions?per_page=100&page=${page}`;
+    try {
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) break;
+      const batch = (await response.json()) as DiscussionThread[];
+      threads.push(...batch);
+      if (batch.length < 100) break;
+      page++;
+    } catch {
+      break;
+    }
+  }
+
+  // Also fetch draft notes
+  const draftsUrl = `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/draft_notes`;
+  try {
+    const response = await fetch(draftsUrl, { credentials: 'same-origin' });
+    if (response.ok) {
+      const drafts = (await response.json()) as Array<{
+        id: number;
+        author_id: number;
+        note: string;
+        position?: DiscussionThread['position'];
+        created_at?: string;
+      }>;
+      for (const draft of drafts) {
+        if (draft.position?.position_type === 'text') {
+          threads.push({
+            id: `draft-${draft.id}`,
+            notes: [{
+              id: draft.id,
+              author: { name: 'You (draft)' },
+              body: draft.note,
+              created_at: draft.created_at ?? new Date().toISOString(),
+              type: 'DraftNote',
+            }],
+            position: draft.position,
+          });
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
+  discussionsCache.set(cacheKey, threads);
+  return threads;
+}
+
+function getDiscussionsForFile(
+  threads: DiscussionThread[],
+  filePath: string
+): Array<{ side: AnnotationSide; lineNumber: number; thread: DiscussionThread }> {
+  const results: Array<{ side: AnnotationSide; lineNumber: number; thread: DiscussionThread }> = [];
+  for (const thread of threads) {
+    const pos = thread.position;
+    if (pos == null || pos.position_type !== 'text') continue;
+    if (pos.new_path !== filePath && pos.old_path !== filePath) continue;
+    // Skip system/resolved-only threads with no content
+    if (thread.notes.length === 0) continue;
+
+    let side: AnnotationSide;
+    let lineNumber: number;
+    if (pos.new_line != null) {
+      side = 'additions';
+      lineNumber = pos.new_line;
+    } else if (pos.old_line != null) {
+      side = 'deletions';
+      lineNumber = pos.old_line;
+    } else {
+      continue;
+    }
+    results.push({ side, lineNumber, thread });
+  }
+  return results;
+}
+
+function useFileDiscussions(filePath: string): DiscussionThread[] | null {
+  const [threads, setThreads] = useState<DiscussionThread[] | null>(null);
+  useEffect(() => {
+    const ctx = getMrContext();
+    if (ctx == null) return;
+    void fetchMrDiscussions(ctx).then((all) => {
+      setThreads(all);
+    });
+  }, [filePath]);
+  return threads;
+}
+
+function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.JSX.Element {
+  const isDraft = thread.id.startsWith('draft-');
+  return (
+    <div style={{
+      padding: '8px 12px',
+      borderLeft: isDraft ? '3px solid #f5a623' : '3px solid #1f75cb',
+      background: 'var(--gl-background-color-subtle, #fafafa)',
+      borderRadius: '4px',
+      marginBottom: '4px',
+      fontSize: '13px',
+    }}>
+      {thread.notes.map((note) => (
+        <div key={note.id} style={{ marginBottom: '6px' }}>
+          <div style={{ fontWeight: 600, fontSize: '12px', color: 'var(--gl-text-color-subtle, #626168)' }}>
+            {note.author.name}
+            {isDraft && <span style={{ marginLeft: '6px', color: '#f5a623', fontWeight: 400 }}>draft</span>}
+            <span style={{ marginLeft: '8px', fontWeight: 400, opacity: 0.7 }}>
+              {new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+          <div style={{ marginTop: '2px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{note.body}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PierreDiffFile({
   areDiffsCollapsed,
   file,
@@ -1826,16 +1979,41 @@ function PierreDiffFile({
   const selectedRangeRef = useRef<SelectedLineRange | null>(null);
   const lastMultiLineRangeRef = useRef<{ range: SelectedLineRange; at: number } | null>(null);
 
-  const lineAnnotations = useMemo<DiffLineAnnotation[] | undefined>(
-    () =>
-      activeCommentLine == null
-        ? undefined
-        : [{ side: activeCommentLine.side, lineNumber: activeCommentLine.lineNumber }],
-    [activeCommentLine]
-  );
+  const filePath = useMemo(() => normalizeDiffPath(file.name) ?? file.name, [file.name]);
+  const allThreads = useFileDiscussions(filePath);
+  const fileDiscussions = useMemo(() => {
+    if (allThreads == null) return [];
+    return getDiscussionsForFile(allThreads, filePath);
+  }, [allThreads, filePath]);
+
+  const lineAnnotations = useMemo<DiffLineAnnotation<AnnotationMeta>[] | undefined>(() => {
+    const annotations: DiffLineAnnotation<AnnotationMeta>[] = [];
+    // Existing discussions
+    for (const d of fileDiscussions) {
+      annotations.push({
+        side: d.side,
+        lineNumber: d.lineNumber,
+        metadata: { kind: 'discussion', discussionId: d.thread.id, notes: d.thread.notes },
+      });
+    }
+    // Active comment being composed
+    if (activeCommentLine != null) {
+      annotations.push({
+        side: activeCommentLine.side,
+        lineNumber: activeCommentLine.lineNumber,
+        metadata: { kind: 'active-comment' },
+      });
+    }
+    return annotations.length > 0 ? annotations : undefined;
+  }, [activeCommentLine, fileDiscussions]);
 
   const renderAnnotation = useCallback(
-    () => <InlineCommentSlot setHost={setCommentHost} />,
+    (annotation: DiffLineAnnotation<AnnotationMeta>) => {
+      if (annotation.metadata?.kind === 'discussion') {
+        return <DiscussionThreadView thread={{ id: annotation.metadata.discussionId, notes: annotation.metadata.notes }} />;
+      }
+      return <InlineCommentSlot setHost={setCommentHost} />;
+    },
     []
   );
 
@@ -1996,7 +2174,7 @@ function PierreDiffFile({
         {fullFileLoading ? (
           <div className="gl-p-4 gl-text-secondary">Loading full file…</div>
         ) : (
-          <FileDiff
+          <FileDiff<AnnotationMeta>
             disableWorkerPool
             fileDiff={showFullFile && fullFileDiff != null ? fullFileDiff : file}
             key={`${themeSettingsKey}:${areDiffsCollapsed ? 'c' : 'e'}:${showFullFile && fullFileDiff != null ? 'full' : 'hunks'}`}
@@ -2665,6 +2843,8 @@ function renderApiCommentForm(
       const ok = await createDraftNote(ctx, version, filePath, oldFilePath, line.lineNumber, line.side, body);
       if (ok) {
         showToast('Draft comment added.', 'success');
+        // Invalidate discussions cache so it refetches with the new draft
+        discussionsCache.delete(`${ctx.projectPath}!${ctx.mrIid}`);
         wrapper.remove();
         onDone();
       } else {
