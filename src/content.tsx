@@ -9,6 +9,8 @@ import React, {
 } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
+  GIT_DIFF_FILE_BREAK_REGEX,
+  processFile,
   processPatch,
   type AnnotationSide,
   type DiffLineAnnotation,
@@ -493,6 +495,7 @@ function findMountTargets(): MountTargets | null {
     '#diffs',
     '.diffs',
     '.diff-files-holder',
+    '[data-testid="rapid-diffs-app"]',
     '.files',
   ]);
 
@@ -547,7 +550,69 @@ async function fetchPatch(diffUrl: string): Promise<string> {
   return response.text();
 }
 
+/** Cache of raw per-file patch sections keyed by normalized path */
+const rawPatchByPath = new Map<string, string>();
+
+function cacheRawPatches(patch: string): void {
+  rawPatchByPath.clear();
+  const sections = patch.split(GIT_DIFF_FILE_BREAK_REGEX);
+  for (const section of sections) {
+    // Extract the file path from "diff --git a/path b/path"
+    const headerMatch = section.match(/^diff --git a\/(.+?) b\/(.+?)$/m);
+    if (headerMatch == null) continue;
+    const filePath = headerMatch[2]!.replace(/^"(.*)"$/, '$1');
+    rawPatchByPath.set(filePath, section);
+  }
+}
+
+function getProjectPath(): string | null {
+  const match = location.pathname.match(/^\/(.+?)\/-\//);
+  return match?.[1] ?? null;
+}
+
+async function fetchGitLabBlob(projectPath: string, blobSha: string): Promise<string> {
+  const encodedProject = encodeURIComponent(projectPath);
+  const url = `/api/v4/projects/${encodedProject}/repository/blobs/${blobSha}/raw`;
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) {
+    throw new Error(`GitLab returned ${response.status} for blob ${blobSha}`);
+  }
+  return response.text();
+}
+
+const NULL_BLOB_SHA = '0000000000000000000000000000000000000000';
+
+async function fetchFullFileDiff(
+  file: FileDiffMetadata
+): Promise<FileDiffMetadata | null> {
+  const projectPath = getProjectPath();
+  if (projectPath == null) return null;
+  const rawPatch = rawPatchByPath.get(file.name) ?? rawPatchByPath.get(file.name.replace(/^[ab]\//, ''));
+  if (rawPatch == null) return null;
+
+  const oldSha = file.prevObjectId;
+  const newSha = file.newObjectId;
+  if (oldSha == null && newSha == null) return null;
+
+  const [oldContent, newContent] = await Promise.all([
+    oldSha != null && oldSha !== NULL_BLOB_SHA && !oldSha.startsWith('0000000')
+      ? fetchGitLabBlob(projectPath, oldSha)
+      : Promise.resolve(''),
+    newSha != null && newSha !== NULL_BLOB_SHA && !newSha.startsWith('0000000')
+      ? fetchGitLabBlob(projectPath, newSha)
+      : Promise.resolve(''),
+  ]);
+
+  const result = processFile(rawPatch, {
+    oldFile: { contents: oldContent, name: file.prevName ?? file.name },
+    newFile: { contents: newContent, name: file.name },
+    isGitDiff: true,
+  });
+  return result ?? null;
+}
+
 function parseGitPatch(patch: string, cacheKey: string): ParsedDiff {
+  cacheRawPatches(patch);
   const files = processPatch(patch, cacheKey, true).files;
   const fileInfoByPath = new Map<string, FileBrowserFileInfo>();
   const paths = Array.from(
@@ -1084,6 +1149,610 @@ function FileBrowserSearch({
   );
 }
 
+function FileViewedCheckbox({
+  fileKey,
+  nativeCheckbox,
+  paths,
+}: {
+  fileKey: string;
+  nativeCheckbox: HTMLInputElement | null;
+  paths: string[];
+}): React.JSX.Element {
+  const [checked, setChecked] = useState(false);
+  const checkboxId = `gitlab-pierre-viewed-${fileKey}`;
+
+  useEffect(() => {
+    if (nativeCheckbox == null) {
+      setChecked(false);
+      return;
+    }
+    setChecked(nativeCheckbox.checked);
+    const update = () => setChecked(nativeCheckbox.checked);
+    nativeCheckbox.addEventListener('change', update);
+    const observer = new MutationObserver(update);
+    observer.observe(nativeCheckbox, { attributes: true, attributeFilter: ['checked'] });
+    return () => {
+      nativeCheckbox.removeEventListener('change', update);
+      observer.disconnect();
+    };
+  }, [nativeCheckbox]);
+
+  const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    event.preventDefault();
+    const live = nativeCheckbox ?? findNativeFileActions(paths).viewedCheckbox;
+    if (live != null) {
+      live.click();
+      return;
+    }
+    console.info('[GitLab Pierre] viewed-checkbox native target missing', {
+      paths,
+      diffFile: findNativeDiffFiles(paths)[0],
+    });
+    setChecked((value) => !value);
+  };
+
+  return (
+    <label className="gitlab-pierre-file-viewed gl-mr-3" htmlFor={checkboxId}>
+      <input
+        aria-label="Mark file as viewed"
+        checked={checked}
+        className="gitlab-pierre-file-viewed-input"
+        id={checkboxId}
+        onChange={handleChange}
+        type="checkbox"
+      />
+      <span className="gitlab-pierre-file-viewed-label">Viewed</span>
+    </label>
+  );
+}
+
+function FileCommentButton({
+  nativeButton,
+  paths,
+}: {
+  nativeButton: HTMLElement | null;
+  paths: string[];
+}): React.JSX.Element {
+  const [active, setActive] = useState(true);
+  const isOneShot = isRapidDiffsCommentButton(nativeButton);
+
+  useEffect(() => {
+    if (nativeButton == null || isOneShot) return;
+    const read = () => {
+      const pressed = nativeButton.getAttribute('aria-pressed');
+      if (pressed === 'true' || pressed === 'false') {
+        setActive(pressed === 'true');
+        return;
+      }
+      const label = (nativeButton.getAttribute('aria-label') ?? '').toLowerCase();
+      if (label.includes('hide')) setActive(true);
+      else if (label.includes('show')) setActive(false);
+    };
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(nativeButton, {
+      attributes: true,
+      attributeFilter: ['aria-pressed', 'aria-label', 'class'],
+    });
+    return () => observer.disconnect();
+  }, [nativeButton, isOneShot]);
+
+  const handleClick = () => {
+    const live = nativeButton ?? findNativeFileActions(paths).commentToggle;
+    if (!isOneShot) setActive((prev) => !prev);
+    if (live != null) {
+      live.click();
+      return;
+    }
+    console.info('[GitLab Pierre] comment-button native target missing', {
+      paths,
+      diffFile: findNativeDiffFiles(paths)[0],
+    });
+  };
+
+  const label = isOneShot
+    ? 'Comment on this file'
+    : active
+      ? 'Hide all comments on this file'
+      : 'Show all comments on this file';
+
+  return (
+    <button
+      aria-label={label}
+      aria-pressed={isOneShot ? undefined : active}
+      className={`btn gl-button btn-default btn-sm btn-default-tertiary btn-icon gl-mr-1${
+        !isOneShot && !active ? ' gitlab-pierre-toggle-off' : ''
+      }`}
+      onClick={handleClick}
+      title={label}
+      type="button"
+    >
+      <GlIcon name="comment-lines" testid="toggle-comments-icon" />
+    </button>
+  );
+}
+
+interface KebabItem {
+  href: string | null;
+  label: string;
+  onSelect: () => void;
+  separated: boolean;
+  external?: boolean;
+}
+
+interface RapidDiffOptionItem {
+  text?: string;
+  href?: string;
+  messageData?: Record<string, string | number | boolean | null | undefined>;
+  extraAttrs?: Record<string, string | number | boolean | null | undefined>;
+}
+
+function formatRapidDiffsItemText(
+  text: string,
+  data: RapidDiffOptionItem['messageData']
+): string {
+  let result = text.replace(/%\{codeStart\}|%\{codeEnd\}/g, '');
+  if (data != null) {
+    result = result.replace(/%\{(\w+)\}/g, (_match, key: string) => {
+      const value = data[key];
+      return value == null ? '' : String(value);
+    });
+  }
+  return result.replace(/\s+/g, ' ').trim();
+}
+
+function readRapidDiffKebabItems(
+  diffFile: HTMLElement,
+  kebabToggle: HTMLElement | null
+): KebabItem[] {
+  const script = findRapidDiffOptionsScript(diffFile);
+  if (script == null) return [];
+  const raw = script.textContent ?? '';
+  if (raw === '') return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed.flatMap((entry): KebabItem[] => {
+    if (typeof entry !== 'object' || entry == null) return [];
+    const item = entry as RapidDiffOptionItem;
+    const text = typeof item.text === 'string' ? item.text : '';
+    const label = formatRapidDiffsItemText(text, item.messageData);
+    if (label === '') return [];
+    const href = typeof item.href === 'string' && item.href !== '' ? item.href : null;
+    const dataClick =
+      typeof item.extraAttrs?.['data-click'] === 'string'
+        ? (item.extraAttrs['data-click'] as string)
+        : null;
+    const target =
+      typeof item.extraAttrs?.target === 'string' ? (item.extraAttrs.target as string) : null;
+    const external = target === '_blank';
+
+    const onSelect = (): void => {
+      if (dataClick != null) {
+        triggerRapidDiffsAction(diffFile, kebabToggle, dataClick, label);
+        return;
+      }
+      if (href != null) {
+        if (external) {
+          window.open(href, '_blank', 'noopener,noreferrer');
+        } else {
+          window.location.href = href;
+        }
+      }
+    };
+
+    return [
+      {
+        href,
+        label,
+        onSelect,
+        separated: false,
+        external,
+      },
+    ];
+  });
+}
+
+function triggerRapidDiffsAction(
+  diffFile: HTMLElement,
+  kebabToggle: HTMLElement | null,
+  dataClick: string,
+  label: string
+): void {
+  const directTarget = diffFile.querySelector<HTMLElement>(
+    `[data-click="${CSS.escape(dataClick)}"]`
+  );
+  if (directTarget != null) {
+    directTarget.click();
+    return;
+  }
+
+  if (kebabToggle == null) {
+    console.info('[GitLab Pierre] rapid-diffs action target missing', { dataClick, label });
+    return;
+  }
+
+  const wasOpen = kebabToggle.getAttribute('aria-expanded') === 'true';
+  if (!wasOpen) kebabToggle.click();
+
+  const findItem = (): HTMLElement | null => {
+    const fromAttr = document.querySelector<HTMLElement>(
+      `[data-click="${CSS.escape(dataClick)}"]`
+    );
+    if (fromAttr != null) return fromAttr;
+    const candidates = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="menuitem"], a, button')
+    );
+    return (
+      candidates.find((el) => (el.textContent ?? '').replace(/\s+/g, ' ').trim() === label) ?? null
+    );
+  };
+
+  let attempts = 0;
+  const tryClick = (): void => {
+    const item = findItem();
+    if (item != null) {
+      item.click();
+      if (!wasOpen && kebabToggle.getAttribute('aria-expanded') === 'true') {
+        kebabToggle.click();
+      }
+      return;
+    }
+    attempts += 1;
+    if (attempts < 10) {
+      window.requestAnimationFrame(tryClick);
+    } else {
+      console.info('[GitLab Pierre] rapid-diffs action item not located', { dataClick, label });
+      if (!wasOpen && kebabToggle.getAttribute('aria-expanded') === 'true') {
+        kebabToggle.click();
+      }
+    }
+  };
+  window.requestAnimationFrame(tryClick);
+}
+
+const KEBAB_PANEL_SELECTOR = [
+  '[data-testid="disclosure-content"]',
+  '[data-testid="base-dropdown-menu"]',
+  '.gl-new-dropdown-panel',
+  '.gl-new-dropdown-contents',
+  '.gl-disclosure-dropdown-menu',
+  '.dropdown-menu.show',
+  '.dropdown-menu',
+  '[role="menu"]',
+].join(', ');
+
+function findKebabDropdownPanel(kebabToggle: HTMLElement): HTMLElement | null {
+  const panelId = kebabToggle.getAttribute('aria-controls');
+  if (panelId !== null && panelId !== '') {
+    const byId = document.getElementById(panelId);
+    if (byId != null) return byId;
+  }
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>(KEBAB_PANEL_SELECTOR));
+  for (const el of candidates) {
+    if (!el.isConnected) continue;
+    if (el.querySelector('a, button, [role="menuitem"]') == null) continue;
+    return el;
+  }
+  return candidates.find((el) => el.isConnected) ?? null;
+}
+
+function extractKebabItems(panel: HTMLElement, kebabToggle: HTMLElement): KebabItem[] {
+  const items: KebabItem[] = [];
+  let pendingSeparator = false;
+  const interactive = 'a[role="menuitem"], button[role="menuitem"], a, button';
+  const nodes = Array.from(
+    panel.querySelectorAll<HTMLElement>(`${interactive}, hr, [role="separator"]`)
+  );
+  for (const node of nodes) {
+    if (node.tagName === 'HR' || node.getAttribute('role') === 'separator') {
+      pendingSeparator = items.length > 0;
+      continue;
+    }
+    if (node === kebabToggle) continue;
+    if (node.classList.contains('gl-new-dropdown-toggle')) continue;
+    if (node.getAttribute('aria-hidden') === 'true') continue;
+    if (node.closest('[aria-hidden="true"]') != null) continue;
+    const label = (node.textContent ?? '').replace(/\s+/g, ' ').trim();
+    if (label === '') continue;
+    const href = node instanceof HTMLAnchorElement ? node.getAttribute('href') : null;
+    const native = node;
+    items.push({
+      href,
+      label,
+      onSelect: () => native.click(),
+      separated: pendingSeparator,
+    });
+    pendingSeparator = false;
+  }
+  return items;
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+async function scrapeNativeKebabItems(kebabToggle: HTMLElement): Promise<KebabItem[]> {
+  const wasOpen = kebabToggle.getAttribute('aria-expanded') === 'true';
+  if (!wasOpen) kebabToggle.click();
+
+  let panel: HTMLElement | null = null;
+  let items: KebabItem[] = [];
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    panel = findKebabDropdownPanel(kebabToggle);
+    if (panel != null) {
+      items = extractKebabItems(panel, kebabToggle);
+      if (items.length > 0) break;
+    }
+    await nextAnimationFrame();
+  }
+
+  if (items.length === 0) {
+    console.info('[GitLab Pierre] kebab scrape empty', {
+      panel,
+      kebabToggle,
+      diffFile: kebabToggle.closest('.diff-file, diff-file, [data-testid="rd-diff-file"]'),
+    });
+  }
+
+  if (!wasOpen && kebabToggle.getAttribute('aria-expanded') === 'true') {
+    kebabToggle.click();
+  }
+
+  return items;
+}
+
+function buildSynthesizedKebabItems(
+  filePath: string,
+  paths: string[]
+): KebabItem[] {
+  const items: KebabItem[] = [];
+  const actions = findNativeFileActions(paths);
+
+  if (actions.diffFile != null) {
+    const fromJson = readRapidDiffKebabItems(actions.diffFile, actions.kebabToggle);
+    if (fromJson.length > 0) {
+      items.push({
+        href: null,
+        label: 'Copy file path',
+        onSelect: () => copyToClipboard(filePath),
+        separated: false,
+      });
+      items.push(...fromJson);
+      return items;
+    }
+  }
+
+  if (actions.commentToggle != null && !isRapidDiffsCommentButton(actions.commentToggle)) {
+    const native = actions.commentToggle;
+    const labelLower = (native.getAttribute('aria-label') ?? '').toLowerCase();
+    const showing = !labelLower.includes('show');
+    items.push({
+      href: null,
+      label: showing ? 'Hide all comments on this file' : 'Show all comments on this file',
+      onSelect: () => native.click(),
+      separated: false,
+    });
+  }
+
+  items.push({
+    href: null,
+    label: 'Copy file path',
+    onSelect: () => copyToClipboard(filePath),
+    separated: false,
+  });
+
+  if (actions.diffFile != null) {
+    const seenLabels = new Set(items.map((item) => item.label.toLowerCase()));
+    const anchors = Array.from(actions.diffFile.querySelectorAll<HTMLAnchorElement>('a[href]'));
+    for (const anchor of anchors) {
+      const href = anchor.getAttribute('href');
+      if (href == null || href === '' || href.startsWith('#')) continue;
+      const isFileActionLink =
+        anchor.closest('.file-actions') != null ||
+        anchor.closest('[data-testid="file-actions"]') != null ||
+        anchor.closest('[role="menu"], .gl-new-dropdown-panel, .gl-disclosure-dropdown-menu') != null;
+      if (!isFileActionLink) continue;
+      const label = (anchor.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (label === '') continue;
+      const lower = label.toLowerCase();
+      if (seenLabels.has(lower)) continue;
+      seenLabels.add(lower);
+      const native = anchor;
+      items.push({
+        href,
+        label,
+        onSelect: () => native.click(),
+        separated: false,
+      });
+    }
+  }
+
+  return items;
+}
+
+function mergeKebabItems(primary: KebabItem[], extra: KebabItem[]): KebabItem[] {
+  const seen = new Set(primary.map((item) => item.label.toLowerCase()));
+  const merged = [...primary];
+  for (const item of extra) {
+    const key = item.label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+  return merged;
+}
+
+const FULL_FILE_TOGGLE_PATTERN = /^(show\s+(full|entire)\s+file|show\s+changes\s+only|toggle\s+full\s+diff|view\s+full\s+file|view\s+changes\s+only)$/i;
+
+function isFullFileToggleLabel(label: string): boolean {
+  return FULL_FILE_TOGGLE_PATTERN.test(label.trim());
+}
+
+function interceptFullFileToggle(
+  items: KebabItem[],
+  onToggleFullFile: () => void,
+  showingFullFile: boolean
+): KebabItem[] {
+  let hasFullFileItem = false;
+  const result = items.map((item) => {
+    if (!isFullFileToggleLabel(item.label)) return item;
+    hasFullFileItem = true;
+    return {
+      ...item,
+      label: showingFullFile ? 'Show changes only' : 'Show full file',
+      onSelect: onToggleFullFile,
+    };
+  });
+  if (!hasFullFileItem) {
+    result.push({
+      href: null,
+      label: showingFullFile ? 'Show changes only' : 'Show full file',
+      onSelect: onToggleFullFile,
+      separated: true,
+    });
+  }
+  return result;
+}
+
+function FileActionsKebab({
+  fileKey,
+  filePath,
+  nativeButton,
+  onToggleFullFile,
+  paths,
+  showingFullFile,
+}: {
+  fileKey: string;
+  filePath: string;
+  nativeButton: HTMLElement | null;
+  onToggleFullFile: () => void;
+  paths: string[];
+  showingFullFile: boolean;
+}): React.JSX.Element {
+  const [items, setItems] = useState<KebabItem[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const menuId = `gitlab-pierre-kebab-${fileKey}`;
+
+  const handleToggle = () => {
+    if (isOpen) {
+      setIsOpen(false);
+      return;
+    }
+    const actions = findNativeFileActions(paths);
+    const fromJson =
+      actions.diffFile != null
+        ? readRapidDiffKebabItems(actions.diffFile, actions.kebabToggle)
+        : [];
+    const synthesized = buildSynthesizedKebabItems(filePath, paths);
+    const withIntercepted = interceptFullFileToggle(synthesized, onToggleFullFile, showingFullFile);
+    setItems(withIntercepted);
+    setIsOpen(true);
+
+    if (fromJson.length > 0) return;
+
+    const liveNative = nativeButton ?? actions.kebabToggle;
+    if (liveNative == null) {
+      console.info('[GitLab Pierre] kebab native toggle not found', { paths });
+      return;
+    }
+    void scrapeNativeKebabItems(liveNative).then((scraped) => {
+      if (scraped.length === 0) return;
+      setItems((current) => mergeKebabItems(interceptFullFileToggle(current, onToggleFullFile, showingFullFile), interceptFullFileToggle(scraped, onToggleFullFile, showingFullFile)));
+    });
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      if (containerRef.current?.contains(event.target as Node) === true) return;
+      setIsOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [isOpen]);
+
+  const handleItemClick = (item: KebabItem, event: React.MouseEvent<HTMLElement>) => {
+    if (item.href != null && (event.metaKey || event.ctrlKey || event.shiftKey)) {
+      setIsOpen(false);
+      return;
+    }
+    event.preventDefault();
+    setIsOpen(false);
+    item.onSelect();
+  };
+
+  return (
+    <div className="gitlab-pierre-file-kebab" ref={containerRef}>
+      <button
+        aria-controls={menuId}
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        aria-label="More actions for this file"
+        className="btn gl-button btn-default btn-sm btn-default-tertiary btn-icon"
+        onClick={handleToggle}
+        title="More actions"
+        type="button"
+      >
+        <GlIcon name="ellipsis_v" testid="ellipsis_v-icon" />
+      </button>
+      {isOpen ? (
+        <div
+          aria-label="File actions"
+          className="gitlab-pierre-file-kebab-panel"
+          id={menuId}
+          role="menu"
+        >
+          {items.length === 0 ? (
+            <div className="gitlab-pierre-file-kebab-empty">Loading actions…</div>
+          ) : (
+            items.map((item, idx) => {
+              const key = `${idx}:${item.label}`;
+              const className = `gitlab-pierre-file-kebab-item${item.separated ? ' gitlab-pierre-file-kebab-item-separated' : ''}`;
+              return item.href != null ? (
+                <a
+                  className={className}
+                  href={item.href}
+                  key={key}
+                  onClick={(event) => handleItemClick(item, event)}
+                  role="menuitem"
+                >
+                  {item.label}
+                </a>
+              ) : (
+                <button
+                  className={className}
+                  key={key}
+                  onClick={(event) => handleItemClick(item, event)}
+                  role="menuitem"
+                  type="button"
+                >
+                  {item.label}
+                </button>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PierreDiffFile({
   areDiffsCollapsed,
   file,
@@ -1102,8 +1771,32 @@ function PierreDiffFile({
   unsafeCSS: string;
 }): React.JSX.Element {
   const stats = useMemo(() => getFileStats(file), [file]);
-  const fileId = `gitlab-pierre-file-${hashPath(path)}`;
-  const contentId = `gitlab-pierre-content-${hashPath(path)}`;
+  const fileKey = useMemo(() => hashPath(path), [path]);
+  const fileId = `gitlab-pierre-file-${fileKey}`;
+  const contentId = `gitlab-pierre-content-${fileKey}`;
+  const nativePaths = useMemo(() => getDiffFilePaths(file), [file]);
+  const nativeActions = useNativeFileActions(nativePaths);
+
+  const [showFullFile, setShowFullFile] = useState(false);
+  const [fullFileDiff, setFullFileDiff] = useState<FileDiffMetadata | null>(null);
+  const [fullFileLoading, setFullFileLoading] = useState(false);
+
+  const toggleFullFile = useCallback(() => {
+    setShowFullFile((prev) => {
+      const next = !prev;
+      if (next && fullFileDiff == null) {
+        setFullFileLoading(true);
+        void fetchFullFileDiff(file).then((result) => {
+          setFullFileDiff(result);
+          setFullFileLoading(false);
+        }).catch((err) => {
+          console.warn('[GitLab Pierre] Failed to fetch full file:', err);
+          setFullFileLoading(false);
+        });
+      }
+      return next;
+    });
+  }, [file, fullFileDiff]);
 
   const [activeCommentLine, setActiveCommentLine] = useState<ActiveCommentLine | null>(null);
   const [commentHost, setCommentHost] = useState<HTMLElement | null>(null);
@@ -1236,7 +1929,7 @@ function PierreDiffFile({
             <GlIcon name="copy-to-clipboard" testid="copy-to-clipboard-icon" />
           </button>
         </div>
-        <div className="file-actions gl-ml-auto gl-flex gl-items-center gl-self-start">
+        <div className="file-actions gl-ml-auto gl-flex gl-items-center gl-self-start gl-gap-2">
           <div className="diff-stats gl-hidden @sm/panel:!gl-inline-flex">
             <div className="diff-stats-contents">
               <div
@@ -1252,6 +1945,23 @@ function PierreDiffFile({
               </div>
             </div>
           </div>
+          <FileViewedCheckbox
+            fileKey={fileKey}
+            nativeCheckbox={nativeActions.viewedCheckbox}
+            paths={nativePaths}
+          />
+          <FileCommentButton
+            nativeButton={nativeActions.commentToggle}
+            paths={nativePaths}
+          />
+          <FileActionsKebab
+            fileKey={fileKey}
+            filePath={path}
+            nativeButton={nativeActions.kebabToggle}
+            onToggleFullFile={toggleFullFile}
+            paths={nativePaths}
+            showingFullFile={showFullFile}
+          />
         </div>
       </div>
       <div
@@ -1260,31 +1970,36 @@ function PierreDiffFile({
         hidden={areDiffsCollapsed}
         id={contentId}
       >
-        <FileDiff
-          disableWorkerPool
-          fileDiff={file}
-          key={`${themeSettingsKey}:${areDiffsCollapsed ? 'c' : 'e'}`}
-          lineAnnotations={lineAnnotations}
-          options={{
-            collapsedContextThreshold: 12,
-            collapsed: false,
-            diffStyle: 'unified',
-            enableGutterUtility: true,
-            enableLineSelection: true,
-            expansionLineCount: 20,
-            hunkSeparators: 'line-info',
-            onLineSelected: handleLineSelected,
-            onPostRender: ensurePierreDiffCoreStyles,
-            overflow: 'wrap',
-            theme: themeOptions.theme,
-            themeType: themeOptions.themeType,
-            unsafeCSS,
-          }}
-          renderAnnotation={renderAnnotation}
-          renderGutterUtility={(getHoveredLine) => (
-            <LineCommentButton getHoveredLine={getHoveredLine} onAddComment={handleAddComment} />
-          )}
-        />
+        {fullFileLoading ? (
+          <div className="gl-p-4 gl-text-secondary">Loading full file…</div>
+        ) : (
+          <FileDiff
+            disableWorkerPool
+            fileDiff={showFullFile && fullFileDiff != null ? fullFileDiff : file}
+            key={`${themeSettingsKey}:${areDiffsCollapsed ? 'c' : 'e'}:${showFullFile && fullFileDiff != null ? 'full' : 'hunks'}`}
+            lineAnnotations={lineAnnotations}
+            options={{
+              collapsedContextThreshold: showFullFile && fullFileDiff != null ? undefined : 12,
+              collapsed: false,
+              diffStyle: 'unified',
+              enableGutterUtility: true,
+              enableLineSelection: true,
+              expandUnchanged: showFullFile && fullFileDiff != null,
+              expansionLineCount: 20,
+              hunkSeparators: 'line-info',
+              onLineSelected: handleLineSelected,
+              onPostRender: ensurePierreDiffCoreStyles,
+              overflow: 'wrap',
+              theme: themeOptions.theme,
+              themeType: themeOptions.themeType,
+              unsafeCSS,
+            }}
+            renderAnnotation={renderAnnotation}
+            renderGutterUtility={(getHoveredLine) => (
+              <LineCommentButton getHoveredLine={getHoveredLine} onAddComment={handleAddComment} />
+            )}
+          />
+        )}
       </div>
     </div>
   );
@@ -1699,6 +2414,9 @@ const NATIVE_FORM_SELECTOR = [
   '.discussion-form',
   '.notes-form',
   '[data-testid="comment-form"]',
+  '[data-testid="note-edit-form"]',
+  '[data-testid="new-discussion-form"]',
+  'form.reply-placeholder-text-field',
 ].join(', ');
 
 interface NativeCommentHijackOptions {
@@ -1791,8 +2509,10 @@ function traverseVueChildrenForDiffsApp(node: VueInstanceLike | undefined): Diff
   return null;
 }
 
+const NATIVE_DIFF_FILE_SELECTOR = '.diff-file, diff-file, [data-testid="rd-diff-file"]';
+
 function findDiffsAppInstance(targets: MountTargets): DiffsAppLike | null {
-  const seed = targets.diffContainer.querySelector('.diff-file') ?? targets.diffContainer;
+  const seed = targets.diffContainer.querySelector(NATIVE_DIFF_FILE_SELECTOR) ?? targets.diffContainer;
 
   // 1) Walk up the ancestor chain from the seed.
   let walker: Element | null = seed as Element;
@@ -1988,7 +2708,7 @@ async function ensureNativeFileMounted(
   const app = findDiffsAppInstance(targets);
   if (app == null) {
     const ok = findNativeDiffFiles(paths).length > 0;
-    const seedEl = targets.diffContainer.querySelector('.diff-file') ?? targets.diffContainer;
+    const seedEl = targets.diffContainer.querySelector(NATIVE_DIFF_FILE_SELECTOR) ?? targets.diffContainer;
     const ancestorVueNames: string[] = [];
     let probe: Element | null = seedEl as Element;
     while (probe != null && ancestorVueNames.length < 12) {
@@ -2183,7 +2903,7 @@ function startNativeCommentHijack(
   const proceedWithButton = (nativeButton: HTMLElement) => {
     if (cancelled) return;
     const nativeFile =
-      nativeButton.closest<HTMLElement>('.diff-file') ?? nativeButton.ownerDocument.body;
+      nativeButton.closest<HTMLElement>('.diff-file, diff-file, [data-testid="rd-diff-file"]') ?? nativeButton.ownerDocument.body;
     console.info('[GitLab Pierre] proceedWithButton', {
       nativeButtonClass: nativeButton.className,
       hasMultiLine: line.multiLine != null,
@@ -2422,11 +3142,216 @@ function getDiffFilePaths(file: FileDiffMetadata): string[] {
 
 function findNativeDiffFiles(paths: string[]): HTMLElement[] {
   const container: ParentNode = mountState?.targets.diffContainer ?? document;
-  const diffFiles = Array.from(container.querySelectorAll<HTMLElement>('.diff-file'));
+  const diffFiles = Array.from(
+    container.querySelectorAll<HTMLElement>(
+      '.diff-file, diff-file, [data-testid="rd-diff-file"]'
+    )
+  );
   return diffFiles.filter((diffFile) => nativeDiffFileMatchesPath(diffFile, paths));
 }
 
+interface RapidDiffFileData {
+  file_path?: string;
+  old_path?: string;
+  new_path?: string;
+  file_hash?: string;
+}
+
+function readRapidDiffFileData(diffFile: HTMLElement): RapidDiffFileData | null {
+  const raw = diffFile.getAttribute('data-file-data');
+  if (raw == null || raw === '') return null;
+  try {
+    const parsed = JSON.parse(raw) as RapidDiffFileData;
+    return typeof parsed === 'object' && parsed != null ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+interface NativeFileActions {
+  diffFile: HTMLElement | null;
+  viewedCheckbox: HTMLInputElement | null;
+  commentToggle: HTMLElement | null;
+  kebabToggle: HTMLElement | null;
+}
+
+const EMPTY_NATIVE_FILE_ACTIONS: NativeFileActions = {
+  diffFile: null,
+  viewedCheckbox: null,
+  commentToggle: null,
+  kebabToggle: null,
+};
+
+function findNativeFileActions(paths: string[]): NativeFileActions {
+  const [diffFile = null] = findNativeDiffFiles(paths);
+  if (diffFile == null) return EMPTY_NATIVE_FILE_ACTIONS;
+  const scope =
+    diffFile.querySelector<HTMLElement>(
+      '.rd-diff-file-header, [data-testid="rd-diff-file-header"]'
+    ) ??
+    diffFile.querySelector<HTMLElement>('.file-actions') ??
+    diffFile.querySelector<HTMLElement>('.js-file-title') ??
+    diffFile.querySelector<HTMLElement>('[data-testid="file-title-content"]') ??
+    diffFile;
+  const viewedCheckbox = findViewedCheckbox(scope);
+  const commentToggle = findCommentButton(scope);
+  const kebabToggle = findKebabToggleButton(scope);
+  return { diffFile, viewedCheckbox, commentToggle, kebabToggle };
+}
+
+function findViewedCheckbox(scope: HTMLElement): HTMLInputElement | null {
+  const rapidDiffs = scope.querySelector<HTMLInputElement>('input[data-viewed-checkbox]');
+  if (rapidDiffs != null) return rapidDiffs;
+
+  const byTestid = scope.querySelector<HTMLInputElement>(
+    'input[data-testid="fileReviewCheckbox"], input[data-testid="file-review-checkbox"], input.js-file-reviewed-checkbox'
+  );
+  if (byTestid != null) return byTestid;
+
+  for (const checkbox of Array.from(scope.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))) {
+    const containerText = (
+      checkbox.closest('label, .gl-form-checkbox, [class*="checkbox"]')?.textContent ?? ''
+    )
+      .trim()
+      .toLowerCase();
+    if (containerText.includes('viewed')) return checkbox;
+
+    const id = checkbox.id;
+    if (id !== '') {
+      const associated = scope.querySelector<HTMLElement>(`label[for="${CSS.escape(id)}"]`);
+      const associatedText = (associated?.textContent ?? '').trim().toLowerCase();
+      if (associatedText.includes('viewed')) return checkbox;
+    }
+  }
+
+  const all = Array.from(scope.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+  return all.length === 1 ? (all[0] ?? null) : null;
+}
+
+function findCommentButton(scope: HTMLElement): HTMLElement | null {
+  const rapidDiffs = scope.querySelector<HTMLElement>(
+    '[data-testid="comment-files-button"], button[data-click="fileComment"]'
+  );
+  if (rapidDiffs != null) return rapidDiffs;
+
+  const byTestid = scope.querySelector<HTMLElement>(
+    [
+      '[data-testid="toggle-comments-button"]',
+      '[data-testid="toggle-comments-btn"]',
+      '[data-testid="toggle-discussion-button"]',
+      '[data-testid="comments-toggle"]',
+      'button.js-toggle-discussion-wrapper',
+      'button.js-toggle-discussions',
+    ].join(', ')
+  );
+  if (byTestid != null) return byTestid;
+
+  for (const btn of Array.from(scope.querySelectorAll<HTMLElement>('button'))) {
+    const label = (
+      btn.getAttribute('aria-label') ??
+      btn.getAttribute('title') ??
+      ''
+    ).toLowerCase();
+    if (label === '') continue;
+    if (/comment|discussion/.test(label) && /(show|hide|toggle)/.test(label)) {
+      return btn;
+    }
+  }
+
+  for (const btn of Array.from(scope.querySelectorAll<HTMLElement>('button'))) {
+    if (btn.querySelector('use[href*="#comment"]') != null) return btn;
+  }
+
+  return null;
+}
+
+function isRapidDiffsCommentButton(button: HTMLElement | null): boolean {
+  if (button == null) return false;
+  return (
+    button.getAttribute('data-testid') === 'comment-files-button' ||
+    button.getAttribute('data-click') === 'fileComment'
+  );
+}
+
+function findKebabToggleButton(scope: HTMLElement): HTMLElement | null {
+  return (
+    scope.querySelector<HTMLElement>('button[data-click="toggleOptionsMenu"]') ??
+    scope.querySelector<HTMLElement>('[data-testid="file-actions-button"]') ??
+    scope.querySelector<HTMLElement>('[data-testid="dropdown-toggle-btn"]') ??
+    scope.querySelector<HTMLElement>('[data-testid="base-dropdown-toggle"]') ??
+    findButtonByAriaLabel(
+      scope,
+      /^(more options|more actions|file actions|options for this file)/i
+    ) ??
+    scope.querySelector<HTMLElement>('button.gl-new-dropdown-toggle') ??
+    scope.querySelector<HTMLElement>('button[aria-haspopup="menu"]') ??
+    scope.querySelector<HTMLElement>('button[aria-haspopup="true"]')
+  );
+}
+
+function findRapidDiffOptionsScript(diffFile: HTMLElement): HTMLScriptElement | null {
+  return diffFile.querySelector<HTMLScriptElement>(
+    '[data-options-menu] script[type="application/json"]'
+  );
+}
+
+function findButtonByAriaLabel(scope: ParentNode, pattern: RegExp): HTMLElement | null {
+  const candidates = Array.from(
+    scope.querySelectorAll<HTMLElement>('button[aria-label], a[aria-label]')
+  );
+  return candidates.find((el) => pattern.test(el.getAttribute('aria-label') ?? '')) ?? null;
+}
+
+function nativeFileActionsEqual(a: NativeFileActions, b: NativeFileActions): boolean {
+  return (
+    a.diffFile === b.diffFile &&
+    a.viewedCheckbox === b.viewedCheckbox &&
+    a.commentToggle === b.commentToggle &&
+    a.kebabToggle === b.kebabToggle
+  );
+}
+
+function useNativeFileActions(paths: string[]): NativeFileActions {
+  const pathsKey = paths.join('|');
+  const [actions, setActions] = useState<NativeFileActions>(EMPTY_NATIVE_FILE_ACTIONS);
+
+  useEffect(() => {
+    let cancelled = false;
+    let rafId: number | null = null;
+    const refresh = () => {
+      if (cancelled) return;
+      const next = findNativeFileActions(paths);
+      setActions((prev) => (nativeFileActionsEqual(prev, next) ? prev : next));
+    };
+    const scheduleRefresh = () => {
+      if (rafId != null) return;
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        refresh();
+      });
+    };
+    refresh();
+    const container = mountState?.targets.diffContainer ?? null;
+    let observer: MutationObserver | null = null;
+    if (container != null) {
+      observer = new MutationObserver(scheduleRefresh);
+      observer.observe(container, { childList: true, subtree: true });
+    }
+    const interval = window.setInterval(refresh, 2000);
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+      window.clearInterval(interval);
+      if (rafId != null) window.cancelAnimationFrame(rafId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathsKey]);
+
+  return actions;
+}
+
 function nativeDiffFileMatchesPath(diffFile: HTMLElement, paths: string[]): boolean {
+  const fileData = readRapidDiffFileData(diffFile);
   const values = [
     diffFile.dataset.filePath,
     diffFile.dataset.newPath,
@@ -2435,6 +3360,9 @@ function nativeDiffFileMatchesPath(diffFile: HTMLElement, paths: string[]): bool
     diffFile.getAttribute('data-file-path'),
     diffFile.getAttribute('data-new-path'),
     diffFile.getAttribute('data-old-path'),
+    fileData?.file_path,
+    fileData?.new_path,
+    fileData?.old_path,
     diffFile.querySelector<HTMLElement>('[data-file-path]')?.dataset.filePath,
     diffFile.querySelector<HTMLElement>('[data-new-path]')?.dataset.newPath,
     diffFile.querySelector<HTMLElement>('[data-old-path]')?.dataset.oldPath,
@@ -2443,7 +3371,9 @@ function nativeDiffFileMatchesPath(diffFile: HTMLElement, paths: string[]): bool
     .filter((value): value is string => value != null);
 
   const titleText = diffFile
-    .querySelector('.file-title-name, .diff-file-title, [data-testid="file-title"]')
+    .querySelector(
+      '.file-title-name, .diff-file-title, .rd-diff-file-title, .rd-diff-file-link, [data-testid="file-title"]'
+    )
     ?.textContent?.trim();
   if (titleText != null) {
     values.push(normalizeDiffPath(titleText) ?? titleText);
@@ -2507,19 +3437,29 @@ function findCommentButtonNearLineAnchor(lineAnchor: HTMLElement): HTMLElement |
     '.diff-grid-left, .diff-grid-right, [data-testid="left-side"], [data-testid="right-side"]'
   );
   const lineNumberCell = lineAnchor.closest<HTMLElement>('.diff-line-num');
+  const interopRow = lineAnchor.closest<HTMLElement>('[data-interop-type]');
   const scopes = [
     lineNumberCell,
     sideContainer,
+    interopRow,
     lineAnchor.closest('.line_holder'),
     lineAnchor.parentElement,
   ];
 
   for (const scope of scopes) {
     if (!(scope instanceof HTMLElement)) continue;
-    const button = scope.querySelector<HTMLElement>('.js-add-diff-note-button');
+    const button =
+      scope.querySelector<HTMLElement>('.js-add-diff-note-button') ??
+      scope.querySelector<HTMLElement>('[data-testid="add-diff-note-button"]') ??
+      scope.querySelector<HTMLElement>('button[data-click="addDiffNote"]');
     if (button != null && !isDisabledButton(button)) {
       return button;
     }
+  }
+
+  // Rapid-diffs: the line anchor itself may act as the comment trigger
+  if (lineAnchor.hasAttribute('data-linenumber') && lineAnchor.closest('[data-interop-type]') != null) {
+    return lineAnchor;
   }
 
   return null;
