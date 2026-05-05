@@ -67,6 +67,15 @@
   margin-top: 12px;
 }
 
+[data-gitlab-pierre="compare-bar"] {
+  margin: 0;
+  padding: 0;
+}
+
+[data-gitlab-pierre="compare-bar"] .mr-version-menus-container {
+  padding-left: 0 !important;
+}
+
 .gitlab-pierre-toolbar {
   display: flex;
   align-items: center;
