@@ -66,6 +66,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 0.5rem;
+  margin-bottom: 12px;
 }
 
 .gitlab-pierre-toolbar-actions {

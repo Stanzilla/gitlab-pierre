@@ -709,29 +709,27 @@ function getNativeChangesChrome(): NativeChangesChrome {
 }
 
 const NATIVE_BAR_MOVED_ATTR = 'data-gitlab-pierre-bar-moved';
-const nativeBarPlaceholders = new WeakMap<HTMLElement, Comment>();
 
-function detachNativeCompareBar(targets: MountTargets): void {
+function detachNativeCompareBar(targets: MountTargets): HTMLElement | null {
   const bar = targets.diffContainer.querySelector<HTMLElement>(
     '.mr-version-controls, .compare-versions-header'
   );
-  if (bar == null || bar.hasAttribute(NATIVE_BAR_MOVED_ATTR)) return;
-  const placeholder = document.createComment('gitlab-pierre-bar-placeholder');
-  bar.parentNode?.insertBefore(placeholder, bar);
-  nativeBarPlaceholders.set(bar, placeholder);
-  bar.setAttribute(NATIVE_BAR_MOVED_ATTR, 'true');
-  const shell = document.querySelector<HTMLElement>(`[${EXTENSION_ATTR}="shell"]`);
-  const anchor = shell ?? targets.diffContainer;
-  anchor.parentNode?.insertBefore(bar, anchor);
+  if (bar == null) return null;
+  if (!bar.hasAttribute(NATIVE_BAR_MOVED_ATTR)) {
+    bar.setAttribute(NATIVE_BAR_MOVED_ATTR, 'true');
+  }
+  return bar;
 }
 
-function restoreNativeCompareBar(): void {
-  for (const bar of document.querySelectorAll<HTMLElement>(`[${NATIVE_BAR_MOVED_ATTR}]`)) {
-    const placeholder = nativeBarPlaceholders.get(bar);
-    bar.removeAttribute(NATIVE_BAR_MOVED_ATTR);
-    if (placeholder?.parentNode == null) continue;
-    placeholder.parentNode.replaceChild(bar, placeholder);
-    nativeBarPlaceholders.delete(bar);
+function restoreNativeCompareBar(targets?: MountTargets): void {
+  const bar = document.querySelector<HTMLElement>(`[${NATIVE_BAR_MOVED_ATTR}]`);
+  if (bar == null) return;
+  bar.removeAttribute(NATIVE_BAR_MOVED_ATTR);
+  const container = targets?.diffContainer ?? document.querySelector<HTMLElement>(
+    '[data-testid="diffs"], #diffs, .diffs, .diff-files-holder, [data-testid="rapid-diffs-app"], .files'
+  );
+  if (container != null) {
+    container.prepend(bar);
   }
 }
 
@@ -744,7 +742,7 @@ function hideNativeGitLabView(targets: MountTargets): void {
 }
 
 function revealNativeGitLabView(targets: MountTargets): void {
-  restoreNativeCompareBar();
+  restoreNativeCompareBar(targets);
   targets.diffContainer.classList.remove(HIDDEN_CLASS);
   targets.diffContainer.removeAttribute('aria-hidden');
   // Comment hijack may have left inline !important offscreen styles in place
@@ -927,10 +925,23 @@ function PierreChangesView({
     }
   }, [viewMode]);
 
+  const compareBarRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const targets = mountState?.targets;
+    const container = compareBarRef.current;
+    if (targets == null || container == null) return;
+    if (viewMode !== 'pierre') return;
+    const bar = detachNativeCompareBar(targets);
+    if (bar != null) {
+      container.appendChild(bar);
+      bar.style.display = '';
+    }
+  }, [viewMode]);
+
   return (
     <IconSpriteContext.Provider value={spriteUrl}>
       <div className="mr-version-controls" data-gitlab-pierre="toolbar">
-        <div className="mr-version-menus-container gl-px-5 gl-pb-2 gl-pt-3 gitlab-pierre-toolbar">
+        <div className="mr-version-menus-container gl-px-5 gl-pt-0 gitlab-pierre-toolbar">
           <PierreVersionContext nativeChrome={nativeChrome} />
 
           <div className="gitlab-pierre-toolbar-actions gl-flex gl-items-center gl-gap-2 gl-ml-auto">
@@ -982,6 +993,8 @@ function PierreChangesView({
           </div>
         </div>
       </div>
+
+      <div ref={compareBarRef} data-gitlab-pierre="compare-bar" hidden={!isPierreView} />
 
       <div
         className={`gl-flex gl-flex-wrap gitlab-pierre-layout${isFileBrowserVisible ? '' : ' gitlab-pierre-layout-no-sidebar'}`}
