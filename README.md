@@ -1,6 +1,6 @@
 # GitLab Pierre
 
-Chrome extension that replaces the `gitlab.com` changes view with Pierre-powered diffs and a Pierre-powered changed-files tree.
+Chrome extension that replaces GitLab changes views with Pierre-powered diffs and a Pierre-powered changed-files tree, including self-hosted GitLab instances.
 
 <img width="3128" height="1688" alt="Google Chrome-2026-05-05-18 38 14" src="https://github.com/user-attachments/assets/4a3b0039-03a2-4493-8d67-d819bfd98e7f" />
 
@@ -19,9 +19,9 @@ Load the generated `dist/` directory in Chrome:
 
 ## Supported pages
 
-- Merge request changes: `https://gitlab.com/<namespace>/<project>/-/merge_requests/<iid>/diffs`
-- Commits: `https://gitlab.com/<namespace>/<project>/-/commit/<sha>`
-- Compares: `https://gitlab.com/<namespace>/<project>/-/compare/<from>...<to>`
+- Merge request changes: `https://<gitlab-host>/<namespace>/<project>/-/merge_requests/<iid>/diffs`
+- Commits: `https://<gitlab-host>/<namespace>/<project>/-/commit/<sha>`
+- Compares: `https://<gitlab-host>/<namespace>/<project>/-/compare/<from>...<to>`
 
 The manifest-declared content script is a small bootstrap. It dynamically loads the Pierre app bundle from the extension, fetches GitLab's same-origin raw `.diff` endpoint, parses it with `@pierre/diffs`, renders each parsed file with Pierre's `<FileDiff />`, and renders the changed file list with `@pierre/trees`.
 

@@ -5,18 +5,26 @@
   "version": "0.4.30",
   "content_scripts": [
     {
-      "matches": ["https://gitlab.com/*"],
+      "matches": [
+        "*://*/*/-/merge_requests/*/diffs*",
+        "*://*/*/-/commit/*",
+        "*://*/*/-/compare/*"
+      ],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }
   ],
-  "host_permissions": ["https://gitlab.com/*"],
+  "host_permissions": ["*://*/*"],
   "permissions": ["storage"],
   "web_accessible_resources": [
     {
       "resources": ["pierre-app.js", "*.js"],
-      "matches": ["https://gitlab.com/*"]
+      "matches": [
+        "*://*/*/-/merge_requests/*/diffs*",
+        "*://*/*/-/commit/*",
+        "*://*/*/-/compare/*"
+      ]
     }
   ]
 }
