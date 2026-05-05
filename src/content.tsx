@@ -2023,6 +2023,17 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
     return `${days}d ago`;
   };
 
+  const noteActionBtnStyle: React.CSSProperties = {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '14px',
+    opacity: 0.6,
+    padding: '2px 6px',
+    borderRadius: '4px',
+    lineHeight: 1,
+  };
+
   return (
     <div style={{
       border: '1px solid var(--gl-border-color-default, #dcdcde)',
@@ -2078,7 +2089,7 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
                     style={{ width: '24px', height: '24px', borderRadius: '50%' }}
                   />
                 )}
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap', flex: 1 }}>
                   <span style={{ fontWeight: 600, fontSize: '13px' }}>{note.author.name}</span>
                   {note.author.username != null && (
                     <span style={{ fontSize: '12px', color: 'var(--gl-text-color-subtle, #626168)' }}>
@@ -2101,27 +2112,66 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
                     </span>
                   )}
                 </div>
-                {/* Edit button (only for non-draft) */}
+                {/* Action buttons toolbar */}
                 {!isDraft && (
-                  <button
-                    type="button"
-                    style={{
-                      marginLeft: 'auto',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                      opacity: 0.5,
-                      padding: '2px 6px',
-                    }}
-                    title="Edit"
-                    onClick={() => {
-                      setEditingNoteId(note.id);
-                      setEditText(note.body);
-                    }}
-                  >
-                    ✎
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginLeft: 'auto' }}>
+                    {note.resolvable && (
+                      <button
+                        type="button"
+                        title={resolved ? 'Unresolve thread' : 'Resolve thread'}
+                        style={noteActionBtnStyle}
+                        onClick={() => void handleResolve()}
+                      >
+                        {resolved ? '☑' : '☐'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      title="Add reaction"
+                      style={noteActionBtnStyle}
+                      onClick={() => {
+                        // Open GitLab's native emoji picker in a new tab for now
+                        const ctx = getMrContext();
+                        if (ctx != null) {
+                          window.open(`/${ctx.projectPath}/-/merge_requests/${ctx.mrIid}#note_${note.id}`, '_blank');
+                        }
+                      }}
+                    >
+                      🙂
+                    </button>
+                    <button
+                      type="button"
+                      title="Reply"
+                      style={noteActionBtnStyle}
+                      onClick={() => setReplyOpen(true)}
+                    >
+                      ↩
+                    </button>
+                    <button
+                      type="button"
+                      title="Edit"
+                      style={noteActionBtnStyle}
+                      onClick={() => {
+                        setEditingNoteId(note.id);
+                        setEditText(note.body);
+                      }}
+                    >
+                      ✎
+                    </button>
+                    <button
+                      type="button"
+                      title="More actions"
+                      style={noteActionBtnStyle}
+                      onClick={() => {
+                        const ctx = getMrContext();
+                        if (ctx != null) {
+                          window.open(`/${ctx.projectPath}/-/merge_requests/${ctx.mrIid}#note_${note.id}`, '_blank');
+                        }
+                      }}
+                    >
+                      ⋮
+                    </button>
+                  </div>
                 )}
               </div>
 
