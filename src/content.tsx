@@ -885,14 +885,23 @@ function PierreChangesView({
 
   // Fetch discussions once for the whole MR
   const [discussions, setDiscussions] = useState<DiscussionThread[] | null>(null);
+  const [discussionsFetchKey, setDiscussionsFetchKey] = useState(0);
   useEffect(() => {
     const ctx = getMrContext();
-    console.info('[GitLab Pierre] discussions fetch start', { ctx });
     if (ctx == null) return;
     void fetchMrDiscussions(ctx).then((threads) => {
-      console.info('[GitLab Pierre] discussions fetched', { count: threads.length });
       setDiscussions(threads);
     });
+  }, [discussionsFetchKey]);
+
+  // Expose refetch for use after comment submission
+  useEffect(() => {
+    (window as any).__pierreRefetchDiscussions = () => {
+      const ctx = getMrContext();
+      if (ctx != null) discussionsCache.delete(`${ctx.projectPath}!${ctx.mrIid}`);
+      setDiscussionsFetchKey((k) => k + 1);
+    };
+    return () => { delete (window as any).__pierreRefetchDiscussions; };
   }, []);
 
   const toggleFile = useCallback((path: string) => {
@@ -1923,6 +1932,10 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
   const [resolved, setResolved] = useState(isResolved);
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
+  const [kebabOpenNoteId, setKebabOpenNoteId] = useState<number | null>(null);
+  const [deletedNoteIds, setDeletedNoteIds] = useState<Set<number>>(new Set());
+
+  const visibleNotes = thread.notes.filter((n) => !deletedNoteIds.has(n.id));
 
   const lineRangeLabel = useMemo(() => {
     if (pos == null) return null;
@@ -2027,12 +2040,68 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
     background: 'none',
     border: 'none',
     cursor: 'pointer',
-    fontSize: '14px',
-    opacity: 0.6,
-    padding: '2px 6px',
+    padding: '4px',
     borderRadius: '4px',
-    lineHeight: 1,
+    lineHeight: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    opacity: 0.7,
   };
+
+  const iconSvg = (d: string) => (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={{ display: 'block' }}>
+      <path d={d} />
+    </svg>
+  );
+
+  // SVG icon paths (from GitLab's icon set)
+  const icons = {
+    checkCircle: 'M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm3.03 4.97a.75.75 0 0 0-1.06 0L7 8.94 5.53 7.47a.75.75 0 1 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l3.5-3.5a.75.75 0 0 0 0-1.06z',
+    smile: 'M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zM5.5 6.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm5 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zM4.5 9.5a.5.5 0 0 0-.09.99A5.25 5.25 0 0 0 8 12a5.25 5.25 0 0 0 3.59-1.51.5.5 0 0 0-.68-.73A4.25 4.25 0 0 1 8 11a4.25 4.25 0 0 1-2.91-1.24.5.5 0 0 0-.59-.26z',
+    reply: 'M6.5 2.5a.75.75 0 0 0-1.28-.53l-4.5 4.5a.75.75 0 0 0 0 1.06l4.5 4.5a.75.75 0 0 0 1.28-.53V9.06c3.93.18 5.47 1.72 6.25 3.47a.75.75 0 0 0 1.4-.2c.07-.36.1-.74.1-1.08 0-4.22-3.07-7.25-7.75-7.5V2.5z',
+    pencil: 'M11.54 1.96a1.75 1.75 0 0 1 2.5 0l.5.5a1.75 1.75 0 0 1 0 2.5l-7.5 7.5a1 1 0 0 1-.42.26l-3 1a.75.75 0 0 1-.95-.95l1-3a1 1 0 0 1 .26-.42l7.6-7.39z',
+    ellipsis: 'M4 8a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm5.5 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM13 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z',
+  };
+
+  const kebabItemStyle: React.CSSProperties = {
+    display: 'block',
+    width: '100%',
+    textAlign: 'left',
+    padding: '8px 12px',
+    border: 'none',
+    background: 'none',
+    cursor: 'pointer',
+    fontSize: '13px',
+    color: 'var(--gl-text-color-default, inherit)',
+  };
+
+  const handleDeleteNote = async (noteId: number) => {
+    const ctx = getMrContext();
+    if (ctx == null) return;
+    const encodedProject = encodeURIComponent(ctx.projectPath);
+    const csrf = getCsrfToken();
+    const headers: Record<string, string> = {};
+    if (csrf != null) headers['X-CSRF-Token'] = csrf;
+    try {
+      const url = isDraft
+        ? `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/draft_notes/${noteId}`
+        : `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/discussions/${thread.id}/notes/${noteId}`;
+      const response = await fetch(url, { method: 'DELETE', credentials: 'same-origin', headers });
+      if (response.ok) {
+        setDeletedNoteIds((prev) => new Set(prev).add(noteId));
+        showToast('Comment deleted.', 'success');
+        setKebabOpenNoteId(null);
+      } else {
+        showToast('Failed to delete comment.', 'error');
+      }
+    } catch {
+      showToast('Failed to delete comment.', 'error');
+    }
+    setKebabOpenNoteId(null);
+  };
+
+  if (visibleNotes.length === 0) return <></>;
 
   return (
     <div style={{
@@ -2040,7 +2109,7 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
       borderRadius: '6px',
       background: 'var(--gl-background-color-default, #fff)',
       marginBottom: '8px',
-      overflow: 'hidden',
+      overflow: 'visible',
     }}>
       {/* Line range header */}
       {lineRangeLabel != null && (
@@ -2078,7 +2147,7 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
       {/* Notes */}
       {!collapsed && (
         <div style={{ padding: '12px' }}>
-          {thread.notes.map((note) => (
+          {visibleNotes.map((note) => (
             <div key={note.id} style={{ marginBottom: '12px' }}>
               {/* Author row */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
@@ -2113,66 +2182,113 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
                   )}
                 </div>
                 {/* Action buttons toolbar */}
-                {!isDraft && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginLeft: 'auto' }}>
-                    {note.resolvable && (
-                      <button
-                        type="button"
-                        title={resolved ? 'Unresolve thread' : 'Resolve thread'}
-                        style={noteActionBtnStyle}
-                        onClick={() => void handleResolve()}
-                      >
-                        {resolved ? '☑' : '☐'}
-                      </button>
-                    )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', marginLeft: 'auto' }}>
+                  {!isDraft && note.resolvable && (
+                    <button
+                      type="button"
+                      title={resolved ? 'Unresolve thread' : 'Resolve thread'}
+                      style={{ ...noteActionBtnStyle, color: resolved ? '#108548' : undefined }}
+                      onClick={() => void handleResolve()}
+                    >
+                      {iconSvg(icons.checkCircle)}
+                    </button>
+                  )}
+                  {!isDraft && (
                     <button
                       type="button"
                       title="Add reaction"
                       style={noteActionBtnStyle}
                       onClick={() => {
-                        // Open GitLab's native emoji picker in a new tab for now
                         const ctx = getMrContext();
                         if (ctx != null) {
                           window.open(`/${ctx.projectPath}/-/merge_requests/${ctx.mrIid}#note_${note.id}`, '_blank');
                         }
                       }}
                     >
-                      🙂
+                      {iconSvg(icons.smile)}
                     </button>
+                  )}
+                  {!isDraft && (
                     <button
                       type="button"
                       title="Reply"
                       style={noteActionBtnStyle}
                       onClick={() => setReplyOpen(true)}
                     >
-                      ↩
+                      {iconSvg(icons.reply)}
                     </button>
-                    <button
-                      type="button"
-                      title="Edit"
-                      style={noteActionBtnStyle}
-                      onClick={() => {
-                        setEditingNoteId(note.id);
-                        setEditText(note.body);
-                      }}
-                    >
-                      ✎
-                    </button>
+                  )}
+                  <button
+                    type="button"
+                    title="Edit"
+                    style={noteActionBtnStyle}
+                    onClick={() => {
+                      setEditingNoteId(note.id);
+                      setEditText(note.body);
+                    }}
+                  >
+                    {iconSvg(icons.pencil)}
+                  </button>
+                  <div style={{ position: 'relative' }}>
                     <button
                       type="button"
                       title="More actions"
                       style={noteActionBtnStyle}
-                      onClick={() => {
-                        const ctx = getMrContext();
-                        if (ctx != null) {
-                          window.open(`/${ctx.projectPath}/-/merge_requests/${ctx.mrIid}#note_${note.id}`, '_blank');
-                        }
-                      }}
+                      onClick={() => setKebabOpenNoteId(kebabOpenNoteId === note.id ? null : note.id)}
                     >
-                      ⋮
+                      {iconSvg(icons.ellipsis)}
                     </button>
+                    {kebabOpenNoteId === note.id && (
+                        <div style={{
+                          position: 'absolute',
+                          right: 0,
+                          top: '100%',
+                          marginTop: '4px',
+                          background: 'var(--gl-background-color-default, #fff)',
+                          border: '1px solid var(--gl-border-color-default, #dcdcde)',
+                          borderRadius: '6px',
+                          boxShadow: '0 2px 8px rgba(0,0,0,.15)',
+                          zIndex: 100,
+                          minWidth: '160px',
+                          padding: '4px 0',
+                        }}>
+                          <button
+                            type="button"
+                            style={kebabItemStyle}
+                            onClick={() => {
+                              const ctx = getMrContext();
+                              if (ctx != null) {
+                                const url = `${window.location.origin}/${ctx.projectPath}/-/merge_requests/${ctx.mrIid}#note_${note.id}`;
+                                void navigator.clipboard.writeText(url);
+                                showToast('Link copied to clipboard', 'success');
+                              }
+                              setKebabOpenNoteId(null);
+                            }}
+                          >
+                            Copy link
+                          </button>
+                          <button
+                            type="button"
+                            style={kebabItemStyle}
+                            onClick={() => {
+                              void navigator.clipboard.writeText(note.body);
+                              showToast('Comment copied to clipboard', 'success');
+                              setKebabOpenNoteId(null);
+                            }}
+                          >
+                            Copy comment
+                          </button>
+                          <button
+                            type="button"
+                            style={{ ...kebabItemStyle, color: '#dd2b0e' }}
+                            onClick={() => void handleDeleteNote(note.id)}
+                          >
+                            Delete comment
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
               </div>
 
               {/* Note body or edit form */}
@@ -3196,8 +3312,11 @@ function renderApiCommentForm(
       const ok = await createDraftNote(ctx, version, filePath, oldFilePath, line.lineNumber, line.side, body);
       if (ok) {
         showToast('Draft comment added.', 'success');
-        // Invalidate discussions cache so it refetches with the new draft
+        // Invalidate discussions cache and trigger refetch
         discussionsCache.delete(`${ctx.projectPath}!${ctx.mrIid}`);
+        if (typeof (window as any).__pierreRefetchDiscussions === 'function') {
+          (window as any).__pierreRefetchDiscussions();
+        }
         wrapper.remove();
         onDone();
       } else {
