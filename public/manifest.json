@@ -6,9 +6,9 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*/*/-/merge_requests/*/diffs*",
-        "*://*/*/-/commit/*",
-        "*://*/*/-/compare/*"
+        "https://*/*/-/merge_requests/*/diffs*",
+        "https://*/*/-/commit/*",
+        "https://*/*/-/compare/*"
       ],
       "js": ["content.js"],
       "css": ["content.css"],
@@ -20,9 +20,9 @@
     {
       "resources": ["pierre-app.js", "*.js"],
       "matches": [
-        "*://*/*/-/merge_requests/*/diffs*",
-        "*://*/*/-/commit/*",
-        "*://*/*/-/compare/*"
+        "https://*/*/-/merge_requests/*/diffs*",
+        "https://*/*/-/commit/*",
+        "https://*/*/-/compare/*"
       ]
     }
   ]
