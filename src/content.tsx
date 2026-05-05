@@ -887,8 +887,12 @@ function PierreChangesView({
   const [discussions, setDiscussions] = useState<DiscussionThread[] | null>(null);
   useEffect(() => {
     const ctx = getMrContext();
+    console.info('[GitLab Pierre] discussions fetch start', { ctx });
     if (ctx == null) return;
-    void fetchMrDiscussions(ctx).then(setDiscussions);
+    void fetchMrDiscussions(ctx).then((threads) => {
+      console.info('[GitLab Pierre] discussions fetched', { count: threads.length });
+      setDiscussions(threads);
+    });
   }, []);
 
   const toggleFile = useCallback((path: string) => {
@@ -1868,10 +1872,10 @@ async function fetchMrDiscussions(ctx: MrContext): Promise<DiscussionThread[]> {
   } catch { /* ignore */ }
 
   discussionsCache.set(cacheKey, threads);
-  console.debug('[GitLab Pierre] fetchMrDiscussions', {
+  console.info('[GitLab Pierre] fetchMrDiscussions result', {
     total: threads.length,
     withPosition: threads.filter((t) => t.position?.position_type === 'text').length,
-    paths: [...new Set(threads.flatMap((t) => [t.position?.new_path, t.position?.old_path].filter(Boolean)))].slice(0, 10),
+    samplePaths: [...new Set(threads.flatMap((t) => [t.position?.new_path, t.position?.old_path].filter(Boolean)))].slice(0, 10),
   });
   return threads;
 }
