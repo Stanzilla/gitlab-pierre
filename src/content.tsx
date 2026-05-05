@@ -1802,11 +1802,6 @@ interface DiscussionNote {
   created_at: string;
   resolved?: boolean;
   type?: string | null;
-}
-
-interface DiscussionThread {
-  id: string;
-  notes: DiscussionNote[];
   position?: {
     new_line?: number | null;
     old_line?: number | null;
@@ -1814,6 +1809,11 @@ interface DiscussionThread {
     old_path?: string;
     position_type?: string;
   } | null;
+}
+
+interface DiscussionThread {
+  id: string;
+  notes: DiscussionNote[];
 }
 
 let discussionsCache: Map<string, DiscussionThread[]> = new Map();
@@ -1850,7 +1850,7 @@ async function fetchMrDiscussions(ctx: MrContext): Promise<DiscussionThread[]> {
         id: number;
         author_id: number;
         note: string;
-        position?: DiscussionThread['position'];
+        position?: DiscussionNote['position'];
         created_at?: string;
       }>;
       for (const draft of drafts) {
@@ -1863,8 +1863,8 @@ async function fetchMrDiscussions(ctx: MrContext): Promise<DiscussionThread[]> {
               body: draft.note,
               created_at: draft.created_at ?? new Date().toISOString(),
               type: 'DraftNote',
+              position: draft.position,
             }],
-            position: draft.position,
           });
         }
       }
@@ -1874,8 +1874,8 @@ async function fetchMrDiscussions(ctx: MrContext): Promise<DiscussionThread[]> {
   discussionsCache.set(cacheKey, threads);
   console.info('[GitLab Pierre] fetchMrDiscussions result', {
     total: threads.length,
-    withPosition: threads.filter((t) => t.position?.position_type === 'text').length,
-    samplePaths: [...new Set(threads.flatMap((t) => [t.position?.new_path, t.position?.old_path].filter(Boolean)))].slice(0, 10),
+    withPosition: threads.filter((t) => t.notes[0]?.position?.position_type === 'text').length,
+    samplePaths: [...new Set(threads.flatMap((t) => [t.notes[0]?.position?.new_path, t.notes[0]?.position?.old_path].filter(Boolean)))].slice(0, 10),
   });
   return threads;
 }
@@ -1886,11 +1886,11 @@ function getDiscussionsForFile(
 ): Array<{ side: AnnotationSide; lineNumber: number; thread: DiscussionThread }> {
   const results: Array<{ side: AnnotationSide; lineNumber: number; thread: DiscussionThread }> = [];
   for (const thread of threads) {
-    const pos = thread.position;
+    if (thread.notes.length === 0) continue;
+    // Position is on the first note of the discussion
+    const pos = thread.notes[0]?.position;
     if (pos == null || pos.position_type !== 'text') continue;
     if (pos.new_path !== filePath && pos.old_path !== filePath) continue;
-    // Skip system/resolved-only threads with no content
-    if (thread.notes.length === 0) continue;
 
     let side: AnnotationSide;
     let lineNumber: number;
