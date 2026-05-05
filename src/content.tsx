@@ -1797,10 +1797,11 @@ type AnnotationMeta =
 
 interface DiscussionNote {
   id: number;
-  author: { name: string; avatar_url?: string };
+  author: { name: string; username?: string; avatar_url?: string };
   body: string;
   created_at: string;
   resolved?: boolean;
+  resolvable?: boolean;
   type?: string | null;
   position?: {
     new_line?: number | null;
@@ -1910,27 +1911,322 @@ function getDiscussionsForFile(
 
 function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.JSX.Element {
   const isDraft = thread.id.startsWith('draft-');
+  const firstNote = thread.notes[0];
+  const pos = firstNote?.position;
+  const isResolved = thread.notes.some((n) => n.resolved === true);
+  const isResolvable = thread.notes.some((n) => n.resolvable === true);
+
+  const [collapsed, setCollapsed] = useState(isResolved);
+  const [replyText, setReplyText] = useState('');
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [resolved, setResolved] = useState(isResolved);
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
+
+  const lineRangeLabel = useMemo(() => {
+    if (pos == null) return null;
+    const parts: string[] = [];
+    if (pos.old_line != null) parts.push(`-${pos.old_line}`);
+    if (pos.new_line != null) parts.push(`+${pos.new_line}`);
+    return parts.length > 0 ? parts.join(' to ') : null;
+  }, [pos]);
+
+  const handleReply = async () => {
+    const body = replyText.trim();
+    if (body.length === 0 || isDraft) return;
+    const ctx = getMrContext();
+    if (ctx == null) return;
+    setSubmitting(true);
+    const encodedProject = encodeURIComponent(ctx.projectPath);
+    const csrf = getCsrfToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrf != null) headers['X-CSRF-Token'] = csrf;
+    try {
+      const response = await fetch(
+        `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/discussions/${thread.id}/notes`,
+        { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ body }) }
+      );
+      if (response.ok) {
+        const newNote = (await response.json()) as DiscussionNote;
+        thread.notes.push(newNote);
+        setReplyText('');
+        setReplyOpen(false);
+      } else {
+        showToast('Failed to post reply.', 'error');
+      }
+    } catch {
+      showToast('Failed to post reply.', 'error');
+    }
+    setSubmitting(false);
+  };
+
+  const handleResolve = async () => {
+    const ctx = getMrContext();
+    if (ctx == null) return;
+    const encodedProject = encodeURIComponent(ctx.projectPath);
+    const csrf = getCsrfToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrf != null) headers['X-CSRF-Token'] = csrf;
+    const newResolved = !resolved;
+    try {
+      const response = await fetch(
+        `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/discussions/${thread.id}`,
+        { method: 'PUT', credentials: 'same-origin', headers, body: JSON.stringify({ resolved: newResolved }) }
+      );
+      if (response.ok) {
+        setResolved(newResolved);
+        if (newResolved) setCollapsed(true);
+      } else {
+        showToast('Failed to resolve thread.', 'error');
+      }
+    } catch {
+      showToast('Failed to resolve thread.', 'error');
+    }
+  };
+
+  const handleEdit = async (noteId: number) => {
+    const body = editText.trim();
+    if (body.length === 0) return;
+    const ctx = getMrContext();
+    if (ctx == null) return;
+    const encodedProject = encodeURIComponent(ctx.projectPath);
+    const csrf = getCsrfToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrf != null) headers['X-CSRF-Token'] = csrf;
+    try {
+      const response = await fetch(
+        `/api/v4/projects/${encodedProject}/merge_requests/${ctx.mrIid}/discussions/${thread.id}/notes/${noteId}`,
+        { method: 'PUT', credentials: 'same-origin', headers, body: JSON.stringify({ body }) }
+      );
+      if (response.ok) {
+        const note = thread.notes.find((n) => n.id === noteId);
+        if (note != null) note.body = body;
+        setEditingNoteId(null);
+        setEditText('');
+      } else {
+        showToast('Failed to edit comment.', 'error');
+      }
+    } catch {
+      showToast('Failed to edit comment.', 'error');
+    }
+  };
+
+  const timeAgo = (dateStr: string): string => {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  };
+
   return (
     <div style={{
-      padding: '8px 12px',
-      borderLeft: isDraft ? '3px solid #f5a623' : '3px solid #1f75cb',
-      background: 'var(--gl-background-color-subtle, #fafafa)',
-      borderRadius: '4px',
-      marginBottom: '4px',
-      fontSize: '13px',
+      border: '1px solid var(--gl-border-color-default, #dcdcde)',
+      borderRadius: '6px',
+      background: 'var(--gl-background-color-default, #fff)',
+      marginBottom: '8px',
+      overflow: 'hidden',
     }}>
-      {thread.notes.map((note) => (
-        <div key={note.id} style={{ marginBottom: '6px' }}>
-          <div style={{ fontWeight: 600, fontSize: '12px', color: 'var(--gl-text-color-subtle, #626168)' }}>
-            {note.author.name}
-            {isDraft && <span style={{ marginLeft: '6px', color: '#f5a623', fontWeight: 400 }}>draft</span>}
-            <span style={{ marginLeft: '8px', fontWeight: 400, opacity: 0.7 }}>
-              {new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-            </span>
-          </div>
-          <div style={{ marginTop: '2px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{note.body}</div>
+      {/* Line range header */}
+      {lineRangeLabel != null && (
+        <div style={{
+          padding: '6px 12px',
+          background: 'var(--gl-background-color-subtle, #fafafa)',
+          borderBottom: '1px solid var(--gl-border-color-default, #dcdcde)',
+          fontSize: '12px',
+          color: 'var(--gl-text-color-subtle, #626168)',
+        }}>
+          Comment on line {lineRangeLabel}
         </div>
-      ))}
+      )}
+
+      {/* Resolved/collapsed toggle */}
+      {resolved && (
+        <div
+          style={{
+            padding: '8px 12px',
+            cursor: 'pointer',
+            fontSize: '13px',
+            color: 'var(--gl-text-color-subtle, #626168)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          <span style={{ fontSize: '10px' }}>{collapsed ? '▶' : '▼'}</span>
+          <span style={{ color: '#108548' }}>✓ Resolved</span>
+          <span>by {thread.notes[thread.notes.length - 1]?.author.name ?? 'unknown'}</span>
+        </div>
+      )}
+
+      {/* Notes */}
+      {!collapsed && (
+        <div style={{ padding: '12px' }}>
+          {thread.notes.map((note) => (
+            <div key={note.id} style={{ marginBottom: '12px' }}>
+              {/* Author row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                {note.author.avatar_url != null && (
+                  <img
+                    src={note.author.avatar_url}
+                    alt=""
+                    style={{ width: '24px', height: '24px', borderRadius: '50%' }}
+                  />
+                )}
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 600, fontSize: '13px' }}>{note.author.name}</span>
+                  {note.author.username != null && (
+                    <span style={{ fontSize: '12px', color: 'var(--gl-text-color-subtle, #626168)' }}>
+                      @{note.author.username}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '12px', color: 'var(--gl-text-color-subtle, #626168)' }}>
+                    {timeAgo(note.created_at)}
+                  </span>
+                  {isDraft && (
+                    <span style={{
+                      fontSize: '11px',
+                      padding: '1px 6px',
+                      borderRadius: '3px',
+                      background: '#f5a623',
+                      color: '#fff',
+                      fontWeight: 500,
+                    }}>
+                      draft
+                    </span>
+                  )}
+                </div>
+                {/* Edit button (only for non-draft) */}
+                {!isDraft && (
+                  <button
+                    type="button"
+                    style={{
+                      marginLeft: 'auto',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      opacity: 0.5,
+                      padding: '2px 6px',
+                    }}
+                    title="Edit"
+                    onClick={() => {
+                      setEditingNoteId(note.id);
+                      setEditText(note.body);
+                    }}
+                  >
+                    ✎
+                  </button>
+                )}
+              </div>
+
+              {/* Note body or edit form */}
+              {editingNoteId === note.id ? (
+                <div style={{ marginTop: '4px' }}>
+                  <textarea
+                    style={{
+                      width: '100%',
+                      minHeight: '60px',
+                      padding: '8px',
+                      border: '1px solid var(--gl-border-color-default, #dcdcde)',
+                      borderRadius: '4px',
+                      font: '13px/1.4 ui-monospace, monospace',
+                      resize: 'vertical',
+                      background: 'var(--gl-background-color-default, #fff)',
+                      color: 'var(--gl-text-color-default, inherit)',
+                    }}
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void handleEdit(note.id); }
+                      if (e.key === 'Escape') { setEditingNoteId(null); setEditText(''); }
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px', justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn gl-button btn-default btn-sm" onClick={() => { setEditingNoteId(null); setEditText(''); }}>Cancel</button>
+                    <button type="button" className="btn gl-button btn-confirm btn-sm" onClick={() => void handleEdit(note.id)}>Save</button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginTop: '2px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '13px', lineHeight: '1.5' }}>
+                  {note.body}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Reply + Resolve row */}
+          {!isDraft && (
+            <div style={{ marginTop: '8px' }}>
+              {replyOpen ? (
+                <div>
+                  <textarea
+                    style={{
+                      width: '100%',
+                      minHeight: '60px',
+                      padding: '8px',
+                      border: '1px solid var(--gl-border-color-default, #dcdcde)',
+                      borderRadius: '4px',
+                      font: '13px/1.4 ui-monospace, monospace',
+                      resize: 'vertical',
+                      background: 'var(--gl-background-color-default, #fff)',
+                      color: 'var(--gl-text-color-default, inherit)',
+                    }}
+                    placeholder="Reply… (Ctrl+Enter to submit)"
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void handleReply(); }
+                      if (e.key === 'Escape') { setReplyOpen(false); setReplyText(''); }
+                    }}
+                    autoFocus
+                  />
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px', justifyContent: 'flex-end' }}>
+                    <button type="button" className="btn gl-button btn-default btn-sm" onClick={() => { setReplyOpen(false); setReplyText(''); }}>Cancel</button>
+                    <button type="button" className="btn gl-button btn-confirm btn-sm" disabled={submitting} onClick={() => void handleReply()}>
+                      {submitting ? 'Sending…' : 'Reply'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    readOnly
+                    placeholder="Reply..."
+                    style={{
+                      flex: 1,
+                      padding: '6px 10px',
+                      border: '1px solid var(--gl-border-color-default, #dcdcde)',
+                      borderRadius: '4px',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      background: 'var(--gl-background-color-default, #fff)',
+                      color: 'var(--gl-text-color-subtle, #626168)',
+                    }}
+                    onClick={() => setReplyOpen(true)}
+                  />
+                  {isResolvable && (
+                    <button
+                      type="button"
+                      className="btn gl-button btn-default btn-sm"
+                      onClick={() => void handleResolve()}
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
+                      {resolved ? 'Unresolve thread' : 'Resolve thread'}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
