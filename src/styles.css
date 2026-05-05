@@ -61,12 +61,19 @@
   -webkit-font-smoothing: antialiased;
 }
 
+[data-gitlab-pierre="toolbar"] {
+  position: relative;
+  z-index: 200;
+  margin-top: 12px;
+}
+
 .gitlab-pierre-toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 12px;
+  padding: 0 0.5rem;
 }
 
 .gitlab-pierre-toolbar-actions {

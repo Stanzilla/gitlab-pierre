@@ -941,7 +941,7 @@ function PierreChangesView({
   return (
     <IconSpriteContext.Provider value={spriteUrl}>
       <div className="mr-version-controls" data-gitlab-pierre="toolbar">
-        <div className="mr-version-menus-container gl-px-5 gl-pt-0 gitlab-pierre-toolbar">
+        <div className="mr-version-menus-container gl-pt-0 gitlab-pierre-toolbar">
           <PierreVersionContext nativeChrome={nativeChrome} />
 
           <div className="gitlab-pierre-toolbar-actions gl-flex gl-items-center gl-gap-2 gl-ml-auto">
