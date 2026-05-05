@@ -15,7 +15,6 @@
       "run_at": "document_idle"
     }
   ],
-  "host_permissions": ["*://*/*"],
   "permissions": ["storage"],
   "web_accessible_resources": [
     {
