@@ -10,16 +10,16 @@ importers:
     dependencies:
       '@pierre/diffs':
         specifier: 1.1.22
-        version: 1.1.22(react-dom@19.2.5(react@19.2.6))(react@19.2.6)
+        version: 1.1.22(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@pierre/trees':
         specifier: 1.0.0-beta.4
-        version: 1.0.0-beta.4(react-dom@19.2.5(react@19.2.6))(react@19.2.6)
+        version: 1.0.0-beta.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       react:
         specifier: 19.2.6
         version: 19.2.6
       react-dom:
-        specifier: 19.2.5
-        version: 19.2.5(react@19.2.6)
+        specifier: 19.2.6
+        version: 19.2.6(react@19.2.6)
     devDependencies:
       '@types/chrome':
         specifier: 0.1.42
@@ -417,10 +417,10 @@ packages:
   property-information@7.1.0:
     resolution: {integrity: sha512-TwEZ+X+yCJmYfL7TPUOcvBZ4QfoT5YenQiJuX//0th53DE6w0xxLEtfK3iyryQFddXuvkIk51EEgrJQ0WJkOmQ==}
 
-  react-dom@19.2.5:
-    resolution: {integrity: sha512-J5bAZz+DXMMwW/wV3xzKke59Af6CHY7G4uYLN1OvBcKEsWOs4pQExj86BBKamxl/Ik5bx9whOrvBlSDfWzgSag==}
+  react-dom@19.2.6:
+    resolution: {integrity: sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==}
     peerDependencies:
-      react: ^19.2.5
+      react: ^19.2.6
 
   react@19.2.6:
     resolution: {integrity: sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==}
@@ -568,7 +568,7 @@ snapshots:
 
   '@oxc-project/types@0.130.0': {}
 
-  '@pierre/diffs@1.1.22(react-dom@19.2.5(react@19.2.6))(react@19.2.6)':
+  '@pierre/diffs@1.1.22(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@pierre/theme': 0.0.28
       '@shikijs/transformers': 3.23.0
@@ -576,17 +576,17 @@ snapshots:
       hast-util-to-html: 9.0.5
       lru_map: 0.4.1
       react: 19.2.6
-      react-dom: 19.2.5(react@19.2.6)
+      react-dom: 19.2.6(react@19.2.6)
       shiki: 3.23.0
 
   '@pierre/theme@0.0.28': {}
 
-  '@pierre/trees@1.0.0-beta.4(react-dom@19.2.5(react@19.2.6))(react@19.2.6)':
+  '@pierre/trees@1.0.0-beta.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       preact: 11.0.0-beta.0
       preact-render-to-string: 6.6.5(preact@11.0.0-beta.0)
       react: 19.2.6
-      react-dom: 19.2.5(react@19.2.6)
+      react-dom: 19.2.6(react@19.2.6)
 
   '@rolldown/binding-android-arm64@1.0.1':
     optional: true
@@ -874,7 +874,7 @@ snapshots:
 
   property-information@7.1.0: {}
 
-  react-dom@19.2.5(react@19.2.6):
+  react-dom@19.2.6(react@19.2.6):
     dependencies:
       react: 19.2.6
       scheduler: 0.27.0
