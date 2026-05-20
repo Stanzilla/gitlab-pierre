@@ -13,6 +13,7 @@ import {
   processFile,
   processPatch,
   type AnnotationSide,
+  type CodeViewItem,
   type DiffLineAnnotation,
   type DiffsThemeNames,
   type FileDiffMetadata,
@@ -20,7 +21,7 @@ import {
   type SelectedLineRange,
   type ThemeTypes,
 } from '@pierre/diffs';
-import { FileDiff } from '@pierre/diffs/react';
+import { CodeView, FileDiff, type CodeViewHandle } from '@pierre/diffs/react';
 import { FileTree } from '@pierre/trees/react';
 import {
   FileTree as FileTreeModel,
@@ -53,6 +54,11 @@ interface DiffStats {
 interface FileStats {
   additions: number;
   deletions: number;
+}
+
+interface CodeViewLineSelection {
+  id: string;
+  range: SelectedLineRange;
 }
 
 interface FileBrowserFileInfo {
@@ -94,10 +100,6 @@ const PIERRE_DIFF_BASE_UNSAFE_CSS = `
 pre, code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
-}
-
-[data-diffs-header] {
-  display: none !important;
 }
 
 [data-code] {
@@ -869,10 +871,32 @@ function PierreChangesView({
   const [fileBrowserView, setFileBrowserView] = useState<FileBrowserView>('tree');
   const [isFileBrowserVisible, setIsFileBrowserVisible] = useState(true);
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(() => new Set());
+  const [fullFilePaths, setFullFilePaths] = useState<Set<string>>(() => new Set());
+  const [fullFileDiffs, setFullFileDiffs] = useState<Map<string, FileDiffMetadata>>(
+    () => new Map()
+  );
+  const [fullFileLoadingPaths, setFullFileLoadingPaths] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [activeComment, setActiveComment] = useState<ActiveCodeViewComment | null>(null);
+  const [commentHost, setCommentHost] = useState<HTMLElement | null>(null);
+  const [codeViewItemsVersion, setCodeViewItemsVersion] = useState(0);
+  const codeViewRef = useRef<CodeViewHandle<AnnotationMeta>>(null);
+  const selectedLineSelectionRef = useRef<CodeViewLineSelection | null>(null);
+  const lastMultiLineRangeRef = useRef<{
+    id: string;
+    range: SelectedLineRange;
+    at: number;
+  } | null>(null);
   const spriteUrl = useMemo(() => getIconSpriteUrl(), []);
   const diffThemeOptions = useMemo(() => getDiffThemeOptions(themeSettings), [themeSettings]);
   const unsafeCSS = useMemo(() => getPierreDiffUnsafeCSS(themeSettings), [themeSettings]);
   const isPierreView = viewMode === 'pierre';
+  const isAnyFullFileVisible = fullFilePaths.size > 0;
+
+  const bumpCodeViewItems = useCallback(() => {
+    setCodeViewItemsVersion((version) => version + 1);
+  }, []);
 
   // Fetch discussions once for the whole MR
   const [discussions, setDiscussions] = useState<DiscussionThread[] | null>(null);
@@ -882,8 +906,9 @@ function PierreChangesView({
     if (ctx == null) return;
     void fetchMrDiscussions(ctx).then((threads) => {
       setDiscussions(threads);
+      bumpCodeViewItems();
     });
-  }, [discussionsFetchKey]);
+  }, [bumpCodeViewItems, discussionsFetchKey]);
 
   // Expose refetch for use after comment submission
   useEffect(() => {
@@ -905,11 +930,178 @@ function PierreChangesView({
       }
       return next;
     });
-  }, []);
-  const expandAll = useCallback(() => setCollapsedPaths(new Set()), []);
+    bumpCodeViewItems();
+  }, [bumpCodeViewItems]);
+  const expandAll = useCallback(() => {
+    setCollapsedPaths(new Set());
+    bumpCodeViewItems();
+  }, [bumpCodeViewItems]);
   const collapseAll = useCallback(
-    () => setCollapsedPaths(new Set(parsed.paths)),
-    [parsed.paths]
+    () => {
+      setCollapsedPaths(new Set(parsed.paths));
+      bumpCodeViewItems();
+    },
+    [bumpCodeViewItems, parsed.paths]
+  );
+
+  const handleFileSelected = useCallback((path: string) => {
+    codeViewRef.current?.scrollTo({
+      type: 'item',
+      id: path,
+      align: 'start',
+      behavior: 'smooth-auto',
+    });
+  }, []);
+
+  const toggleFullFile = useCallback(
+    (path: string, file: FileDiffMetadata) => {
+      let shouldLoad = false;
+      setFullFilePaths((prev) => {
+        const next = new Set(prev);
+        if (next.has(path)) {
+          next.delete(path);
+        } else {
+          next.add(path);
+          shouldLoad = !fullFileDiffs.has(path);
+        }
+        return next;
+      });
+      bumpCodeViewItems();
+
+      if (!shouldLoad) return;
+
+      setFullFileLoadingPaths((prev) => new Set(prev).add(path));
+      void fetchFullFileDiff(file)
+        .then((result) => {
+          if (result == null) {
+            showToast('Could not load the full file.', 'warning');
+            setFullFilePaths((prev) => {
+              const next = new Set(prev);
+              next.delete(path);
+              return next;
+            });
+            return;
+          }
+          setFullFileDiffs((prev) => {
+            const next = new Map(prev);
+            next.set(path, result);
+            return next;
+          });
+        })
+        .catch((error: unknown) => {
+          console.warn('[GitLab Pierre] Failed to fetch full file:', error);
+          showToast('Could not load the full file.', 'warning');
+          setFullFilePaths((prev) => {
+            const next = new Set(prev);
+            next.delete(path);
+            return next;
+          });
+        })
+        .finally(() => {
+          setFullFileLoadingPaths((prev) => {
+            const next = new Set(prev);
+            next.delete(path);
+            return next;
+          });
+          bumpCodeViewItems();
+        });
+    },
+    [bumpCodeViewItems, fullFileDiffs]
+  );
+
+  const handleSelectedLinesChange = useCallback((selection: CodeViewLineSelection | null) => {
+    selectedLineSelectionRef.current = selection;
+    if (selection == null) {
+      lastMultiLineRangeRef.current = null;
+      return;
+    }
+    if (selection.range.start !== selection.range.end) {
+      lastMultiLineRangeRef.current = {
+        id: selection.id,
+        range: selection.range,
+        at: Date.now(),
+      };
+    }
+  }, []);
+
+  const handleAddComment = useCallback(
+    (item: CodeViewItem<AnnotationMeta>, line: GetHoveredLineResult<'diff'>) => {
+      if (item.type !== 'diff') return;
+      const liveSelection = selectedLineSelectionRef.current;
+      const liveRange = liveSelection?.id === item.id ? liveSelection.range : null;
+      const last = lastMultiLineRangeRef.current;
+      let range = liveRange;
+      if (range == null || range.start === range.end) {
+        if (last != null && last.id === item.id) {
+          const lo = Math.min(last.range.start, last.range.end);
+          const hi = Math.max(last.range.start, last.range.end);
+          if (line.lineNumber >= lo && line.lineNumber <= hi) {
+            range = last.range;
+          }
+        }
+      }
+      const multiLine = resolveMultiLineRange(range, line);
+      setActiveComment({
+        file: item.fileDiff,
+        path: item.id,
+        line: {
+          side: multiLine?.anchorSide ?? line.side,
+          lineNumber: multiLine?.anchorLine ?? line.lineNumber,
+          multiLine,
+        },
+      });
+      bumpCodeViewItems();
+    },
+    [bumpCodeViewItems]
+  );
+
+  const clearActiveCommentForPath = useCallback(
+    (path: string) => {
+      setActiveComment((current) => (current?.path === path ? null : current));
+      bumpCodeViewItems();
+    },
+    [bumpCodeViewItems]
+  );
+
+  useEffect(() => {
+    if (activeComment == null || commentHost == null) return;
+
+    const hijack = startNativeCommentHijack({
+      file: activeComment.file,
+      line: activeComment.line,
+      host: commentHost,
+      onTeardown: () => clearActiveCommentForPath(activeComment.path),
+    });
+
+    return () => {
+      hijack.cancel();
+    };
+  }, [activeComment, clearActiveCommentForPath, commentHost]);
+
+  const codeViewItems = useMemo<CodeViewItem<AnnotationMeta>[]>(
+    () =>
+      parsed.files.map((file) => {
+        const path = normalizeDiffPath(file.name) ?? file.name;
+        const fullFileDiff = fullFileDiffs.get(path);
+        const activeLine = activeComment?.path === path ? activeComment.line : null;
+        return {
+          id: path,
+          type: 'diff',
+          fileDiff: fullFilePaths.has(path) && fullFileDiff != null ? fullFileDiff : file,
+          annotations: getLineAnnotationsForFile(discussions, path, activeLine),
+          collapsed: collapsedPaths.has(path),
+          version: codeViewItemsVersion,
+        };
+      }),
+    [
+      activeComment,
+      codeViewItemsVersion,
+      collapsedPaths,
+      discussions,
+      fullFileDiffs,
+      fullFilePaths,
+      parsed.files,
+    ]
   );
 
   useEffect(() => {
@@ -1004,27 +1196,74 @@ function PierreChangesView({
           fileInfoByPath={parsed.fileInfoByPath}
           fileCount={parsed.stats.files}
           hidden={!isFileBrowserVisible}
+          onFileSelected={handleFileSelected}
           onViewChange={setFileBrowserView}
           paths={parsed.paths}
           view={fileBrowserView}
         />
         <div className="diffs-batch gitlab-pierre-diffs-area" data-gitlab-pierre="diffs-area">
-          {parsed.files.map((file, index) => {
-            const path = normalizeDiffPath(file.name) ?? file.name;
-            return (
-              <PierreDiffFile
-                areDiffsCollapsed={collapsedPaths.has(path)}
-                discussions={discussions}
-                file={file}
-                key={`${path}:${file.prevName ?? ''}:${index}`}
-                onToggle={() => toggleFile(path)}
-                path={path}
-                themeOptions={diffThemeOptions}
-                themeSettingsKey={`${themeSettings.presetId}:${themeSettings.themeType}:${themeSettings.backgroundMode}`}
-                unsafeCSS={unsafeCSS}
+          <CodeView<AnnotationMeta>
+            className="gitlab-pierre-codeview"
+            disableWorkerPool
+            items={codeViewItems}
+            key={`${themeSettings.presetId}:${themeSettings.themeType}:${themeSettings.backgroundMode}`}
+            onSelectedLinesChange={handleSelectedLinesChange}
+            options={{
+              collapsedContextThreshold: isAnyFullFileVisible ? undefined : 12,
+              diffStyle: 'unified',
+              enableGutterUtility: true,
+              enableLineSelection: true,
+              expandUnchanged: isAnyFullFileVisible,
+              expansionLineCount: 20,
+              hunkSeparators: 'line-info',
+              onPostRender: ensurePierreDiffCoreStyles,
+              overflow: 'wrap',
+              stickyHeaders: true,
+              theme: diffThemeOptions.theme,
+              themeType: diffThemeOptions.themeType,
+              unsafeCSS,
+            }}
+            ref={codeViewRef}
+            renderAnnotation={(annotation, item) => {
+              if (annotation.metadata?.kind === 'discussion') {
+                return (
+                  <DiscussionThreadView
+                    thread={{
+                      id: annotation.metadata.discussionId,
+                      notes: annotation.metadata.notes,
+                    }}
+                  />
+                );
+              }
+              return (
+                <InlineCommentSlot
+                  onUnmount={() => clearActiveCommentForPath(item.id)}
+                  setHost={setCommentHost}
+                />
+              );
+            }}
+            renderCustomHeader={(item) => (
+              <PierreCodeViewHeader
+                fileLoading={fullFileLoadingPaths.has(item.id)}
+                item={item}
+                onToggle={() => toggleFile(item.id)}
+                onToggleFullFile={() => {
+                  if (item.type === 'diff') {
+                    toggleFullFile(item.id, item.fileDiff);
+                  }
+                }}
+                showingFullFile={fullFilePaths.has(item.id)}
               />
-            );
-          })}
+            )}
+            renderGutterUtility={(getHoveredLine, item) =>
+              item.type === 'diff' ? (
+                <LineCommentButton
+                  getHoveredLine={getHoveredLine as () => GetHoveredLineResult<'diff'> | undefined}
+                  onAddComment={(line) => handleAddComment(item, line)}
+                />
+              ) : null
+            }
+          />
         </div>
       </div>
     </IconSpriteContext.Provider>
@@ -1067,6 +1306,7 @@ function PierreFileBrowser({
   fileInfoByPath,
   fileCount,
   hidden,
+  onFileSelected,
   onViewChange,
   paths,
   view,
@@ -1074,6 +1314,7 @@ function PierreFileBrowser({
   fileInfoByPath: Map<string, FileBrowserFileInfo>;
   fileCount: number;
   hidden: boolean;
+  onFileSelected: (path: string) => void;
   onViewChange: (view: FileBrowserView) => void;
   paths: string[];
   view: FileBrowserView;
@@ -1093,9 +1334,10 @@ function PierreFileBrowser({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleFileSelected = useCallback(() => {
+  const handleFileSelected = useCallback((path: string) => {
+    onFileSelected(path);
     setSearchQuery('');
-  }, []);
+  }, [onFileSelected]);
 
   return (
     <div
@@ -2403,6 +2645,109 @@ function DiscussionThreadView({ thread }: { thread: DiscussionThread }): React.J
   );
 }
 
+function PierreCodeViewHeader({
+  fileLoading,
+  item,
+  onToggle,
+  onToggleFullFile,
+  showingFullFile,
+}: {
+  fileLoading: boolean;
+  item: CodeViewItem<AnnotationMeta>;
+  onToggle: () => void;
+  onToggleFullFile: () => void;
+  showingFullFile: boolean;
+}): React.JSX.Element | null {
+  if (item.type !== 'diff') return null;
+
+  const path = item.id;
+  const file = item.fileDiff;
+  const stats = useMemo(() => getFileStats(file), [file]);
+  const fileKey = useMemo(() => hashPath(path), [path]);
+  const nativePaths = useMemo(() => getDiffFilePaths(file), [file]);
+  const nativeActions = useNativeFileActions(nativePaths);
+
+  return (
+    <div
+      className="js-file-title file-title file-title-flex-parent gl-rounded-bl-none gl-rounded-br-none !gl-border-0 gitlab-pierre-codeview-header"
+      data-gitlab-pierre-file={path}
+      data-path={path}
+      id={`gitlab-pierre-file-${fileKey}`}
+    >
+      <div className="file-header-content">
+        <button
+          aria-expanded={!item.collapsed}
+          aria-label={item.collapsed ? 'Show file contents' : 'Hide file contents'}
+          className="btn-icon gl-mr-2 btn gl-button btn-default btn-sm btn-default-tertiary"
+          onClick={onToggle}
+          type="button"
+        >
+          <span className="gl-button-text">
+            <ChevronToggleIcon collapsed={item.collapsed === true} />
+          </span>
+        </button>
+        <a
+          className="gl-mr-2 gl-break-all !gl-no-underline"
+          href={`#gitlab-pierre-file-${fileKey}`}
+        >
+          <strong className="file-title-name" data-testid="file-name-content" title={path}>
+            {path}
+          </strong>
+        </a>
+        <button
+          aria-label="Copy file path"
+          className="btn gl-button btn-default btn-sm btn-default-tertiary btn-icon"
+          data-testid="diff-file-copy-clipboard"
+          onClick={() => copyToClipboard(path)}
+          title="Copy file path"
+          type="button"
+        >
+          <GlIcon name="copy-to-clipboard" testid="copy-to-clipboard-icon" />
+        </button>
+      </div>
+      <div className="file-actions gl-ml-auto gl-flex gl-items-center gl-self-start gl-gap-2">
+        {fileLoading ? (
+          <span className="gitlab-pierre-full-file-loading gl-text-secondary">
+            Loading full file…
+          </span>
+        ) : null}
+        <div className="diff-stats gl-hidden @sm/panel:!gl-inline-flex">
+          <div className="diff-stats-contents">
+            <div
+              aria-label={`Added ${stats.additions} lines. Removed ${stats.deletions} lines.`}
+              className="gl-flex"
+            >
+              <div className="diff-stats-group gl-flex gl-items-center gl-text-success gl-font-bold">
+                <span>+</span> <span>{stats.additions}</span>
+              </div>
+              <div className="diff-stats-group gl-flex gl-items-center gl-text-danger gl-font-bold">
+                <span>−</span> <span>{stats.deletions}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <FileViewedCheckbox
+          fileKey={fileKey}
+          nativeCheckbox={nativeActions.viewedCheckbox}
+          paths={nativePaths}
+        />
+        <FileCommentButton
+          nativeButton={nativeActions.commentToggle}
+          paths={nativePaths}
+        />
+        <FileActionsKebab
+          fileKey={fileKey}
+          filePath={path}
+          nativeButton={nativeActions.kebabToggle}
+          onToggleFullFile={onToggleFullFile}
+          paths={nativePaths}
+          showingFullFile={showingFullFile}
+        />
+      </div>
+    </div>
+  );
+}
+
 function PierreDiffFile({
   areDiffsCollapsed,
   discussions,
@@ -3018,6 +3363,41 @@ interface ActiveCommentLine {
   multiLine: MultiLineCommentRange | null;
 }
 
+interface ActiveCodeViewComment {
+  path: string;
+  file: FileDiffMetadata;
+  line: ActiveCommentLine;
+}
+
+function getLineAnnotationsForFile(
+  discussions: DiscussionThread[] | null,
+  filePath: string,
+  activeCommentLine: ActiveCommentLine | null
+): DiffLineAnnotation<AnnotationMeta>[] | undefined {
+  const annotations: DiffLineAnnotation<AnnotationMeta>[] = [];
+  if (discussions != null) {
+    for (const discussion of getDiscussionsForFile(discussions, filePath)) {
+      annotations.push({
+        side: discussion.side,
+        lineNumber: discussion.lineNumber,
+        metadata: {
+          kind: 'discussion',
+          discussionId: discussion.thread.id,
+          notes: discussion.thread.notes,
+        },
+      });
+    }
+  }
+  if (activeCommentLine != null) {
+    annotations.push({
+      side: activeCommentLine.side,
+      lineNumber: activeCommentLine.lineNumber,
+      metadata: { kind: 'active-comment' },
+    });
+  }
+  return annotations.length > 0 ? annotations : undefined;
+}
+
 function resolveMultiLineRange(
   range: SelectedLineRange | null,
   hovered: GetHoveredLineResult<'diff'>
@@ -3097,10 +3477,24 @@ function LineCommentButton({
 }
 
 function InlineCommentSlot({
+  onUnmount,
   setHost,
 }: {
+  onUnmount?: () => void;
   setHost: (el: HTMLElement | null) => void;
 }): React.JSX.Element {
+  const onUnmountRef = useRef(onUnmount);
+
+  useEffect(() => {
+    onUnmountRef.current = onUnmount;
+  }, [onUnmount]);
+
+  useEffect(() => {
+    return () => {
+      onUnmountRef.current?.();
+    };
+  }, []);
+
   return (
     <div
       className="gitlab-pierre-comment-slot"
@@ -4512,7 +4906,7 @@ function PierreFileTree({
   query,
 }: {
   fileInfoByPath: Map<string, FileBrowserFileInfo>;
-  onFileSelected: () => void;
+  onFileSelected: (path: string) => void;
   onQueryChange: (query: string) => void;
   paths: string[];
   query: string;
@@ -4527,8 +4921,7 @@ function PierreFileTree({
         onSearchChange: (value) => onQueryChange(value ?? ''),
         onSelectionChange: ([selectedPath]) => {
           if (selectedPath == null) return;
-          scrollToFile(selectedPath);
-          onFileSelected();
+          onFileSelected(selectedPath);
         },
         paths,
         renderRowDecoration: ({ item }: FileTreeRowDecorationContext) => {
@@ -4565,7 +4958,7 @@ function PierreFileList({
   query,
 }: {
   fileInfoByPath: Map<string, FileBrowserFileInfo>;
-  onFileSelected: () => void;
+  onFileSelected: (path: string) => void;
   paths: string[];
   query: string;
 }): React.JSX.Element {
@@ -4591,8 +4984,7 @@ function PierreFileList({
                 className="gitlab-pierre-file-list-item"
                 key={path}
                 onClick={() => {
-                  scrollToFile(path);
-                  onFileSelected();
+                  onFileSelected(path);
                 }}
                 role="listitem"
                 title={path}
