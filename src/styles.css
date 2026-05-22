@@ -89,6 +89,27 @@
   margin-left: 0.5rem;
 }
 
+.gitlab-pierre-toolbar-stats {
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-text-color-subtle, #737278);
+}
+
+.gitlab-pierre-toolbar-stats-files {
+  font-weight: 600;
+  color: var(--gl-text-color-default, inherit);
+}
+
+.gitlab-pierre-toolbar-stats-add {
+  color: var(--gl-text-color-success, #108548);
+  font-weight: 600;
+}
+
+.gitlab-pierre-toolbar-stats-del {
+  color: var(--gl-text-color-danger, #dd2b0e);
+  font-weight: 600;
+}
+
 .gitlab-pierre-layout {
   align-items: flex-start;
   padding-left: 0;
@@ -112,8 +133,38 @@
   height: calc(100vh - 12rem);
 }
 
+.gitlab-pierre-codeview diffs-container {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--gl-border-color-default, #dcdcde);
+  border-radius: 0.375rem;
+  background: var(--gl-background-color-default, #fff);
+}
+
 .gitlab-pierre-codeview-header {
   width: 100%;
+  box-sizing: border-box;
+  min-height: 2.8125rem;
+  padding: 0.625rem 1rem !important;
+  border-radius: 0.375rem 0.375rem 0 0 !important;
+  box-shadow: inset 0 -1px 0 var(--gl-border-color-default, #dcdcde);
+}
+
+.gitlab-pierre-codeview-header .file-actions {
+  gap: 0;
+}
+
+.gitlab-pierre-codeview-header .diff-stats {
+  display: inline-flex !important;
+  padding-inline: 1rem;
+}
+
+.gitlab-pierre-codeview-header .diff-stats-contents > .gl-flex {
+  gap: 0.5rem;
+}
+
+.gitlab-pierre-codeview-header .diff-stats-group {
+  gap: 0.25rem;
 }
 
 .gitlab-pierre-full-file-loading {
