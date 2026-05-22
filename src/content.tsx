@@ -105,7 +105,7 @@ pre, code {
   display: grid !important;
   grid-auto-flow: dense !important;
   grid-template-columns: max-content minmax(0, 1fr) !important;
-  overflow: auto clip !important;
+  overflow: clip !important;
   tab-size: 2;
 }
 
