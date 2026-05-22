@@ -10,9 +10,9 @@ Native-feeling Pierre `CodeView` diffs mounted in place of GitLab's own diff UI,
 
 Eight bundled themes (Pierre, GitHub, GitHub high contrast, VS Code, Solarized, Gruvbox, Catppuccin, Material), independent light/dark/system mode, and an optional GitLab-background toggle that keeps syntax colors while blending diffs into GitLab's page surface.
 
-![GitHub Light theme rendering inside dark GitLab](docs/screenshots/light-theme.png)
+![GitHub Light theme with GitLab in light mode](docs/screenshots/light-theme.png)
 
-Themes are scoped to the diff — flip Pierre to a light syntax theme while leaving GitLab in dark, or vice versa. Changes apply immediately and are saved with `chrome.storage.local`.
+Pierre's syntax themes and the page theme can be mixed freely — keep GitLab in dark and Pierre in light, the other way around, or fully cohesive like this. Changes apply immediately and are saved with `chrome.storage.local`.
 
 ## Development
 
