@@ -92,6 +92,7 @@
 .gitlab-pierre-layout {
   align-items: flex-start;
   padding-left: 0;
+  margin-top: 0.25rem;
 }
 
 .gitlab-pierre-layout-no-sidebar > [data-gitlab-pierre="diffs-area"] {
@@ -102,7 +103,7 @@
   display: block;
   flex: 1 1 0;
   min-width: 0;
-  padding: 0.75rem 0.5rem 1rem;
+  padding: 0 0.5rem 1rem;
 }
 
 .gitlab-pierre-codeview {
@@ -110,6 +111,14 @@
   width: 100%;
   min-height: 16rem;
   height: calc(100vh - 12rem);
+}
+
+.gitlab-pierre-codeview > :first-child {
+  margin-top: 0 !important;
+}
+
+.gitlab-pierre-codeview > :last-child {
+  margin-bottom: 0 !important;
 }
 
 .gitlab-pierre-codeview diffs-container {
