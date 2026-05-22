@@ -89,27 +89,6 @@
   margin-left: 0.5rem;
 }
 
-.gitlab-pierre-toolbar-stats {
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-  color: var(--gl-text-color-subtle, #737278);
-}
-
-.gitlab-pierre-toolbar-stats-files {
-  font-weight: 600;
-  color: var(--gl-text-color-default, inherit);
-}
-
-.gitlab-pierre-toolbar-stats-add {
-  color: var(--gl-text-color-success, #108548);
-  font-weight: 600;
-}
-
-.gitlab-pierre-toolbar-stats-del {
-  color: var(--gl-text-color-danger, #dd2b0e);
-  font-weight: 600;
-}
-
 .gitlab-pierre-layout {
   align-items: flex-start;
   padding-left: 0;

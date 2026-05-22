@@ -758,27 +758,47 @@ function getNativeChangesChrome(): NativeChangesChrome {
 }
 
 const NATIVE_BAR_MOVED_ATTR = 'data-gitlab-pierre-bar-moved';
+const NATIVE_STATS_BAR_SELECTOR = '.is-compare-versions-header';
 
-function detachNativeCompareBar(targets: MountTargets): HTMLElement | null {
-  const bar = targets.diffContainer.querySelector<HTMLElement>(
+function detachNativeCompareBar(targets: MountTargets): HTMLElement[] {
+  const bars: HTMLElement[] = [];
+  // 1. The .mr-version-controls row ("Compare master and latest version" + file-tree toggle)
+  const ctrl = targets.diffContainer.querySelector<HTMLElement>(
     '.mr-version-controls, .compare-versions-header'
   );
-  if (bar == null) return null;
-  if (!bar.hasAttribute(NATIVE_BAR_MOVED_ATTR)) {
-    bar.setAttribute(NATIVE_BAR_MOVED_ATTR, 'true');
+  if (ctrl != null) bars.push(ctrl);
+  // 2. The sibling row containing the stats banner (`4 files +52 -6` + sort/jump/settings).
+  // It lives in a generic `.gl-flex.gl-flex-wrap` wrapper directly under `#diffs`, so we
+  // anchor on the stats class and climb to that wrapper.
+  const stats = targets.diffContainer.querySelector<HTMLElement>(NATIVE_STATS_BAR_SELECTOR);
+  if (stats != null) {
+    let wrapper: HTMLElement | null = stats;
+    while (wrapper != null && wrapper.parentElement !== targets.diffContainer) {
+      wrapper = wrapper.parentElement;
+    }
+    if (wrapper != null && !bars.includes(wrapper)) bars.push(wrapper);
   }
-  return bar;
+  for (const bar of bars) {
+    if (!bar.hasAttribute(NATIVE_BAR_MOVED_ATTR)) {
+      bar.setAttribute(NATIVE_BAR_MOVED_ATTR, 'true');
+    }
+  }
+  return bars;
 }
 
 function restoreNativeCompareBar(targets?: MountTargets): void {
-  const bar = document.querySelector<HTMLElement>(`[${NATIVE_BAR_MOVED_ATTR}]`);
-  if (bar == null) return;
-  bar.removeAttribute(NATIVE_BAR_MOVED_ATTR);
+  const bars = document.querySelectorAll<HTMLElement>(`[${NATIVE_BAR_MOVED_ATTR}]`);
+  if (bars.length === 0) return;
   const container = targets?.diffContainer ?? document.querySelector<HTMLElement>(
     '[data-testid="diffs"], #diffs, .diffs, .diff-files-holder, [data-testid="rapid-diffs-app"], .files'
   );
-  if (container != null) {
-    container.prepend(bar);
+  // Prepend in reverse order so the first matched bar ends up first in the DOM.
+  const ordered = Array.from(bars).reverse();
+  for (const bar of ordered) {
+    bar.removeAttribute(NATIVE_BAR_MOVED_ATTR);
+    if (container != null) {
+      container.prepend(bar);
+    }
   }
 }
 
@@ -1170,8 +1190,8 @@ function PierreChangesView({
     const container = compareBarRef.current;
     if (targets == null || container == null) return;
     if (viewMode !== 'pierre') return;
-    const bar = detachNativeCompareBar(targets);
-    if (bar != null) {
+    const bars = detachNativeCompareBar(targets);
+    for (const bar of bars) {
       container.appendChild(bar);
       bar.style.display = '';
     }
@@ -1184,16 +1204,6 @@ function PierreChangesView({
           <PierreVersionContext nativeChrome={nativeChrome} />
 
           <div className="gitlab-pierre-toolbar-actions gl-flex gl-items-center gl-gap-2 gl-ml-auto">
-            <div
-              aria-label={`${parsed.stats.files} files changed, ${parsed.stats.additions} additions, ${parsed.stats.deletions} deletions`}
-              className="gitlab-pierre-toolbar-stats gl-flex gl-items-center gl-gap-2 gl-mr-2"
-            >
-              <span className="gitlab-pierre-toolbar-stats-files">
-                {parsed.stats.files} {parsed.stats.files === 1 ? 'file' : 'files'}
-              </span>
-              <span className="gitlab-pierre-toolbar-stats-add">+{parsed.stats.additions}</span>
-              <span className="gitlab-pierre-toolbar-stats-del">-{parsed.stats.deletions}</span>
-            </div>
             <button
               aria-label={isFileBrowserVisible ? 'Hide file browser' : 'Show file browser'}
               aria-pressed={isFileBrowserVisible}
