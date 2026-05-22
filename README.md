@@ -2,7 +2,17 @@
 
 Chrome extension that replaces the `gitlab.com` changes view with Pierre-powered diffs and a Pierre-powered changed-files tree.
 
-<img width="3128" height="1688" alt="Google Chrome-2026-05-05-18 38 14" src="https://github.com/user-attachments/assets/4a3b0039-03a2-4493-8d67-d819bfd98e7f" />
+![Pierre diff view on a GitLab merge request](docs/screenshots/diff-view.png)
+
+Native-feeling Pierre `CodeView` diffs mounted in place of GitLab's own diff UI, with the file browser, compare bar, and stats banner kept exactly where you expect them.
+
+![Theme menu with Pierre's bundled presets](docs/screenshots/theme-menu.png)
+
+Eight bundled themes (Pierre, GitHub, GitHub high contrast, VS Code, Solarized, Gruvbox, Catppuccin, Material), independent light/dark/system mode, and an optional GitLab-background toggle that keeps syntax colors while blending diffs into GitLab's page surface.
+
+![GitHub Light theme rendering inside dark GitLab](docs/screenshots/light-theme.png)
+
+Themes are scoped to the diff — flip Pierre to a light syntax theme while leaving GitLab in dark, or vice versa. Changes apply immediately and are saved with `chrome.storage.local`.
 
 ## Development
 
