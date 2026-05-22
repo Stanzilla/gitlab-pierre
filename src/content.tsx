@@ -27,7 +27,6 @@ import {
   FileTree as FileTreeModel,
   type FileTreeRowDecorationContext,
   type GitStatus,
-  type GitStatusEntry,
 } from '@pierre/trees';
 import diffCoreStyles from '@pierre-diffs-core-style';
 
@@ -120,7 +119,7 @@ pre, code {
   min-width: 0 !important;
 }
 
-[data-gutter] [data-separator]:not([data-separator='line-info']) {
+[data-gutter] [data-separator]:not([data-separator='line-info']):not([data-separator='metadata']) {
   visibility: hidden;
 }
 
@@ -261,6 +260,54 @@ pre, code {
   padding-right: 1ch;
   text-align: right;
   user-select: none;
+}
+
+[data-code][data-unified] [data-column-number] {
+  position: relative;
+  min-width: calc((var(--diffs-min-number-column-width, var(--diffs-min-number-column-width-default, 3ch)) * 2) + 1ch);
+  padding-left: 1ch;
+  padding-right: 1ch;
+  border-right: 1px solid var(--gl-border-color-default, color-mix(in srgb, currentColor 18%, transparent)) !important;
+}
+
+[data-code][data-unified] [data-column-number][data-line-type='context'] {
+  background: var(--gl-background-color-subtle, var(--diffs-bg-buffer)) !important;
+}
+
+[data-gitlab-pierre-dual-line-numbers] {
+  display: grid;
+  grid-template-columns: minmax(3ch, 1fr) minmax(3ch, 1fr);
+  column-gap: 1ch;
+  width: 100%;
+}
+
+[data-gitlab-pierre-old-line],
+[data-gitlab-pierre-new-line] {
+  min-width: 0;
+  text-align: right;
+}
+
+[data-code][data-unified] [data-content] [data-line] {
+  position: relative;
+  padding-left: 2ch !important;
+}
+
+[data-code][data-unified] [data-content] [data-line]::before {
+  position: absolute;
+  left: 0;
+  width: 2ch;
+  color: var(--gl-text-color-subtle, var(--diffs-fg-number));
+  text-align: center;
+  content: " ";
+  user-select: none;
+}
+
+[data-code][data-unified] [data-content] [data-line-type='change-deletion']::before {
+  content: "-";
+}
+
+[data-code][data-unified] [data-content] [data-line-type='change-addition']::before {
+  content: "+";
 }
 
 [data-gutter-utility-slot] {
@@ -425,7 +472,7 @@ interface PierreThemeSettings {
 
 const THEME_PRESET_IDS = new Set<string>(THEME_PRESETS.map((preset) => preset.id));
 const DEFAULT_THEME_SETTINGS: PierreThemeSettings = {
-  backgroundMode: 'theme',
+  backgroundMode: 'gitlab',
   presetId: 'pierre',
   themeType: 'system',
 };
@@ -1137,6 +1184,16 @@ function PierreChangesView({
           <PierreVersionContext nativeChrome={nativeChrome} />
 
           <div className="gitlab-pierre-toolbar-actions gl-flex gl-items-center gl-gap-2 gl-ml-auto">
+            <div
+              aria-label={`${parsed.stats.files} files changed, ${parsed.stats.additions} additions, ${parsed.stats.deletions} deletions`}
+              className="gitlab-pierre-toolbar-stats gl-flex gl-items-center gl-gap-2 gl-mr-2"
+            >
+              <span className="gitlab-pierre-toolbar-stats-files">
+                {parsed.stats.files} {parsed.stats.files === 1 ? 'file' : 'files'}
+              </span>
+              <span className="gitlab-pierre-toolbar-stats-add">+{parsed.stats.additions}</span>
+              <span className="gitlab-pierre-toolbar-stats-del">-{parsed.stats.deletions}</span>
+            </div>
             <button
               aria-label={isFileBrowserVisible ? 'Hide file browser' : 'Show file browser'}
               aria-pressed={isFileBrowserVisible}
@@ -1215,7 +1272,7 @@ function PierreChangesView({
               enableLineSelection: true,
               expandUnchanged: isAnyFullFileVisible,
               expansionLineCount: 20,
-              hunkSeparators: 'line-info',
+              hunkSeparators: 'metadata',
               onPostRender: ensurePierreDiffCoreStyles,
               overflow: 'wrap',
               stickyHeaders: true,
@@ -1996,10 +2053,10 @@ function FileActionsKebab({
         aria-controls={menuId}
         aria-expanded={isOpen}
         aria-haspopup="menu"
-        aria-label="More actions for this file"
+        aria-label="Options"
         className="btn gl-button btn-default btn-sm btn-default-tertiary btn-icon"
         onClick={handleToggle}
-        title="More actions"
+        title="Options"
         type="button"
       >
         <GlIcon name="ellipsis_v" testid="ellipsis_v-icon" />
@@ -2726,15 +2783,19 @@ function PierreCodeViewHeader({
             </div>
           </div>
         </div>
-        <FileViewedCheckbox
-          fileKey={fileKey}
-          nativeCheckbox={nativeActions.viewedCheckbox}
-          paths={nativePaths}
-        />
-        <FileCommentButton
-          nativeButton={nativeActions.commentToggle}
-          paths={nativePaths}
-        />
+        {nativeActions.viewedCheckbox != null ? (
+          <FileViewedCheckbox
+            fileKey={fileKey}
+            nativeCheckbox={nativeActions.viewedCheckbox}
+            paths={nativePaths}
+          />
+        ) : null}
+        {nativeActions.commentToggle != null ? (
+          <FileCommentButton
+            nativeButton={nativeActions.commentToggle}
+            paths={nativePaths}
+          />
+        ) : null}
         <FileActionsKebab
           fileKey={fileKey}
           filePath={path}
@@ -3322,21 +3383,80 @@ function ensurePierreDiffCoreStyles(container: HTMLElement): void {
   }
 
   enhancePierreExpandButtons(shadowRoot);
+  enhancePierreUnifiedLineNumbers(shadowRoot);
 }
 
 function enhancePierreExpandButtons(shadowRoot: ShadowRoot): void {
   shadowRoot.querySelectorAll<HTMLElement>('[data-expand-button]').forEach((button) => {
     if (button.hasAttribute('data-gitlab-pierre-expand-enhanced')) return;
 
-  const label = getPierreExpandButtonLabel(button);
-  button.setAttribute('aria-label', label);
-  button.removeAttribute('title');
+    const label = getPierreExpandButtonLabel(button);
+    button.setAttribute('aria-label', label);
+    button.removeAttribute('title');
     button.setAttribute('tabindex', '0');
     button.setAttribute('data-gitlab-pierre-expand-enhanced', '');
     button.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       button.click();
+    });
+  });
+}
+
+function enhancePierreUnifiedLineNumbers(shadowRoot: ShadowRoot): void {
+  shadowRoot.querySelectorAll<HTMLElement>('[data-code][data-unified]').forEach((code) => {
+    const gutterNumbers = Array.from(
+      code.querySelectorAll<HTMLElement>('[data-gutter] [data-column-number]')
+    );
+    const contentLines = Array.from(
+      code.querySelectorAll<HTMLElement>('[data-content] [data-line]')
+    );
+
+    gutterNumbers.forEach((numberElement, index) => {
+      const contentLine = contentLines[index];
+      if (contentLine == null) return;
+
+      const type = contentLine.getAttribute('data-line-type');
+      const line = contentLine.getAttribute('data-line') ?? '';
+      const altLine = contentLine.getAttribute('data-alt-line');
+      const oldLine = type === 'change-addition' ? '' : (altLine ?? line);
+      const newLine = type === 'change-deletion' ? '' : line;
+      const signature = `${oldLine}:${newLine}`;
+      if (numberElement.getAttribute('data-gitlab-pierre-dual-line-signature') === signature) {
+        return;
+      }
+
+      let wrapper = numberElement.querySelector<HTMLElement>(
+        '[data-gitlab-pierre-dual-line-numbers]'
+      );
+      if (wrapper == null) {
+        wrapper = document.createElement('span');
+        wrapper.setAttribute('data-gitlab-pierre-dual-line-numbers', '');
+      }
+
+      const utilitySlot = numberElement.querySelector('[data-gutter-utility-slot]');
+      Array.from(numberElement.childNodes).forEach((child) => {
+        if (child !== wrapper && child !== utilitySlot) {
+          child.remove();
+        }
+      });
+      if (!numberElement.contains(wrapper)) {
+        const referenceNode = utilitySlot?.parentNode === numberElement
+          ? utilitySlot
+          : numberElement.firstChild;
+        numberElement.insertBefore(wrapper, referenceNode);
+      }
+
+      const oldLineElement = document.createElement('span');
+      oldLineElement.setAttribute('data-gitlab-pierre-old-line', '');
+      oldLineElement.textContent = oldLine;
+
+      const newLineElement = document.createElement('span');
+      newLineElement.setAttribute('data-gitlab-pierre-new-line', '');
+      newLineElement.textContent = newLine;
+
+      wrapper.replaceChildren(oldLineElement, newLineElement);
+      numberElement.setAttribute('data-gitlab-pierre-dual-line-signature', signature);
     });
   });
 }
@@ -4916,7 +5036,6 @@ function PierreFileTree({
       new FileTreeModel({
         flattenEmptyDirectories: true,
         density: 'default',
-        gitStatus: getGitStatusEntries(fileInfoByPath),
         initialExpansion: 'open',
         onSearchChange: (value) => onQueryChange(value ?? ''),
         onSelectionChange: ([selectedPath]) => {
@@ -5015,12 +5134,6 @@ function PierreFileList({
       </div>
     </div>
   );
-}
-
-function getGitStatusEntries(
-  fileInfoByPath: Map<string, FileBrowserFileInfo>
-): GitStatusEntry[] {
-  return Array.from(fileInfoByPath, ([path, info]) => ({ path, status: info.status }));
 }
 
 function getGitStatusLabel(status: GitStatus): string {
