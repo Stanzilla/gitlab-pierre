@@ -1184,16 +1184,18 @@ function PierreChangesView({
           <PierreVersionContext nativeChrome={nativeChrome} />
 
           <div className="gitlab-pierre-toolbar-actions gl-flex gl-items-center gl-gap-2 gl-ml-auto">
-            <div
-              aria-label={`${parsed.stats.files} files changed, ${parsed.stats.additions} additions, ${parsed.stats.deletions} deletions`}
-              className="gitlab-pierre-toolbar-stats gl-flex gl-items-center gl-gap-2 gl-mr-2"
-            >
-              <span className="gitlab-pierre-toolbar-stats-files">
-                {parsed.stats.files} {parsed.stats.files === 1 ? 'file' : 'files'}
-              </span>
-              <span className="gitlab-pierre-toolbar-stats-add">+{parsed.stats.additions}</span>
-              <span className="gitlab-pierre-toolbar-stats-del">-{parsed.stats.deletions}</span>
-            </div>
+            {isPierreView && (
+              <div
+                aria-label={`${parsed.stats.files} files changed, ${parsed.stats.additions} additions, ${parsed.stats.deletions} deletions`}
+                className="gitlab-pierre-toolbar-stats gl-flex gl-items-center gl-gap-2 gl-mr-2"
+              >
+                <span className="gitlab-pierre-toolbar-stats-files">
+                  {parsed.stats.files} {parsed.stats.files === 1 ? 'file' : 'files'}
+                </span>
+                <span className="gitlab-pierre-toolbar-stats-add">+{parsed.stats.additions}</span>
+                <span className="gitlab-pierre-toolbar-stats-del">-{parsed.stats.deletions}</span>
+              </div>
+            )}
             <button
               aria-label={isFileBrowserVisible ? 'Hide file browser' : 'Show file browser'}
               aria-pressed={isFileBrowserVisible}
