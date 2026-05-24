@@ -24,9 +24,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Read version
         id: version
@@ -37,24 +38,23 @@ jobs:
 
       - name: Check if tag exists
         id: check
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag ${{ steps.version.outputs.tag }} already exists, skipping release."
+            echo "Tag $TAG already exists, skipping release."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: pnpm/action-setup@v6.0.8
+      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
         if: steps.check.outputs.exists == 'false'
-        with:
-          version: 10.33.3
 
-      - uses: actions/setup-node@v6.4.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         if: steps.check.outputs.exists == 'false'
         with:
           node-version: 24
-          cache: pnpm
 
       - name: Install dependencies
         if: steps.check.outputs.exists == 'false'
@@ -66,14 +66,14 @@ jobs:
 
       - name: Pack .zip
         if: steps.check.outputs.exists == 'false'
-        uses: cardinalby/webext-buildtools-pack-extension-dir-action@1.0.9
+        uses: cardinalby/webext-buildtools-pack-extension-dir-action@ff720c809940cd5a1cbb048e988cccc71837ade4 # 1.0.9
         with:
           extensionDir: dist
           zipFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.zip
 
       - name: Pack .crx
         if: steps.check.outputs.exists == 'false'
-        uses: cardinalby/webext-buildtools-chrome-crx-action@2.0.3
+        uses: cardinalby/webext-buildtools-chrome-crx-action@200e7173cbdb5acb91d381cf9f7a30080b025047 # 2.0.3
         with:
           zipFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.zip
           crxFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.crx
@@ -81,11 +81,15 @@ jobs:
 
       - name: Create release
         if: steps.check.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v3.0.0
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: ${{ steps.version.outputs.tag }}
-          generate_release_notes: true
-          files: |
-            gitlab-pierre-${{ steps.version.outputs.version }}.crx
-            gitlab-pierre-${{ steps.version.outputs.version }}.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes \
+            "gitlab-pierre-$VERSION.crx" \
+            "gitlab-pierre-$VERSION.zip"
