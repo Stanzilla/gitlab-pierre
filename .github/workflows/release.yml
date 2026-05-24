@@ -7,6 +7,9 @@
 #      Paste the full PEM contents, including BEGIN/END lines.
 #   3. Keep the .pem file out of git. Losing it means the extension's ID
 #      changes and existing installs stop auto-updating.
+#   4. Add Chrome Web Store API credentials as repository secrets:
+#      CWS_CLIENT_ID, CWS_CLIENT_SECRET, CWS_REFRESH_TOKEN,
+#      CWS_PUBLISHER_ID, and CWS_EXTENSION_ID.
 
 name: Release
 
@@ -78,6 +81,29 @@ jobs:
           zipFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.zip
           crxFilePath: gitlab-pierre-${{ steps.version.outputs.version }}.crx
           privateKey: ${{ secrets.EXTENSION_PRIVATE_KEY }}
+
+      - name: Install cws
+        if: steps.check.outputs.exists == 'false'
+        env:
+          CWS_VERSION: v1.1.1
+          CWS_SHA256: a853c6860c712545e472a8199d8f3469cfbbc55a99c04cef573979c54d6a03aa
+        run: |
+          curl -fsSLO "https://github.com/VaughnBosu/cws-cli/releases/download/$CWS_VERSION/cws_linux_amd64.tar.gz"
+          echo "$CWS_SHA256  cws_linux_amd64.tar.gz" | sha256sum -c -
+          tar -xzf cws_linux_amd64.tar.gz
+          install -m 0755 cws "$RUNNER_TEMP/cws"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Publish to Chrome Web Store
+        if: steps.check.outputs.exists == 'false'
+        env:
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: cws upload "gitlab-pierre-$VERSION.zip" --publish
 
       - name: Create release
         if: steps.check.outputs.exists == 'false'
