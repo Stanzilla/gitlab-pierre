@@ -2,6 +2,8 @@
 
 Chrome extension that replaces the `gitlab.com` changes view with Pierre-powered diffs and a Pierre-powered changed-files tree.
 
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/fnfpbgfhniappmcdfoglfddggbhpfinj?label=Chrome%20Web%20Store)](https://chromewebstore.google.com/detail/gitlab-pierre/fnfpbgfhniappmcdfoglfddggbhpfinj)
+
 ![Pierre diff view on a GitLab merge request](docs/screenshots/diff-view.png)
 
 Native-feeling Pierre `CodeView` diffs mounted in place of GitLab's own diff UI, with the file browser, compare bar, and stats banner kept exactly where you expect them.
